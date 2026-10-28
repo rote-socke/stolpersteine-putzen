@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Stolpersteine putzen</title>
+  <meta name="description" content="Gemeinsam Stolpersteine in Stuttgart putzen: Karte, nächste offene Steine, wer wohin unterwegs ist.">
+  <meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16181b" media="(prefers-color-scheme: dark)">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='3' width='26' height='26' rx='3' fill='%23b08d3c'/%3E%3Crect x='7' y='7' width='18' height='18' rx='1' fill='none' stroke='%23fff3cf' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="brand">Stolpersteine <span>putzen</span></h1>
+    <button type="button" id="group-button" class="group-button" aria-haspopup="dialog">
+      <span class="group-button-label" id="group-button-label">Keiner Gruppe beigetreten</span>
+    </button>
+  </header>
+
+  <main class="map-wrap">
+    <div id="map" aria-label="Karte der Stolpersteine"></div>
+    <div class="legend" id="legend">
+      <button type="button" class="legend-toggle" id="legend-toggle" aria-expanded="false" aria-controls="legend-body">Legende</button>
+      <ul class="legend-body" id="legend-body" hidden>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6" class="lg-open"/></svg>Offen</li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" class="lg-own"/></svg>Ihr seid unterwegs</li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6" class="lg-other"/></svg>Andere Gruppe unterwegs</li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="5" class="lg-cleaned"/></svg>Geputzt</li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="11" r="5" class="lg-open"/><circle cx="14" cy="5" r="3" class="lg-note"/></svg>Mit Notiz</li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6" class="lg-me"/></svg>Dein Standort</li>
+      </ul>
+    </div>
+    <button type="button" class="locate-button" id="locate-button">Mein Standort</button>
+  </main>
+
+  <section class="sheet" id="sheet" aria-live="polite"></section>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog class="dialog" id="group-dialog" aria-labelledby="group-dialog-title">
+    <div class="dialog-inner">
+      <div class="dialog-head">
+        <h2 id="group-dialog-title">Gruppe</h2>
+        <button type="button" class="icon-button" data-close aria-label="Schließen">&#x2715;</button>
+      </div>
+      <div id="group-dialog-body"></div>
+    </div>
+  </dialog>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="vendor/qrcode/qrcode.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
