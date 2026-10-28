@@ -26,9 +26,8 @@
   --shadow: 0 -2px 16px rgb(0 0 0 / 0.18);
   /* Map markers. Tiles stay light in dark mode, so these have no dark variant.
      js/map.js STYLES mirrors these values; keep both in sync. */
-  --mk-open-fill: #8c867b;
+  --mk-open-fill: #4a3300;
   --mk-open-ring: #e3b92d;
-  --mk-open-edge: #1c1812;
   --mk-way: #1a5fc0;
   --mk-way-edge: #06183a;
   --mk-cleaned-fill: #e3b92d;
@@ -177,8 +176,7 @@ a { color: var(--accent); }
 }
 .legend-body li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .legend-body svg { width: 20px; height: 20px; flex: none; }
-.lg-open { fill: var(--mk-open-fill); stroke: var(--mk-open-ring); stroke-width: 3; }
-.lg-open-edge { fill: var(--mk-open-edge); }
+.lg-open { fill: var(--mk-open-fill); stroke: var(--mk-open-ring); stroke-width: 1.5; }
 .lg-own { fill: var(--mk-way); stroke: var(--mk-way-edge); stroke-width: 2.5; }
 .lg-other { fill: #ffffff; stroke: var(--mk-way); stroke-width: 3.5; }
 .lg-cleaned { fill: var(--mk-cleaned-fill); stroke: var(--mk-cleaned-edge); stroke-width: 1.5; }

@@ -2,20 +2,15 @@
 /* global L */
 
 // Marker colours mirror the --mk-* tokens in app.css (tiles stay light in dark
-// mode, so there is no dark variant). Open = tarnished grey with a thick brass
-// ring plus a thin dark edge (EDGE, an underlay circle) so it reads on light and
-// coloured tiles, on the way = blue (filled for us, ring for others), cleaned = brass.
-// Cleaned is smaller and drawn below the rest so open stones stay visible.
+// mode, so there is no dark variant). Open and cleaned share one size and swap
+// their colours: open = dark with a brass edge, cleaned = brass with a dark edge.
+// On the way = blue (filled for us, ring for others).
 const STYLES = {
-  open: { radius: 9, color: '#e3b92d', weight: 4, fillColor: '#8c867b', fillOpacity: 1 },
+  open: { radius: 7, color: '#e3b92d', weight: 2, fillColor: '#4a3300', fillOpacity: 1 },
   own: { radius: 11, color: '#06183a', weight: 3, fillColor: '#1a5fc0', fillOpacity: 1 },
   other: { radius: 9, color: '#1a5fc0', weight: 4, fillColor: '#ffffff', fillOpacity: 1 },
-  cleaned: { radius: 5.5, color: '#4a3300', weight: 2, fillColor: '#e3b92d', fillOpacity: 1 },
+  cleaned: { radius: 7, color: '#4a3300', weight: 2, fillColor: '#e3b92d', fillOpacity: 1 },
 };
-
-// Dark edge drawn under open markers: a filled circle 1px larger than the ring.
-const EDGE = { color: '#1c1812', fillColor: '#1c1812', fillOpacity: 1, weight: 0, interactive: false };
-const EDGE_GROW = 3; // ring outer edge is radius + weight/2 = +2
 
 // Other phones (opt-in). Own group = green, other groups = purple, both with a dark edge;
 // distinct from the stone colours (grey/brass/blue) and the pink own dot. Mirrors --mk-mate/--mk-peer.
@@ -55,10 +50,8 @@ export function createMap(el, { onSelect }) {
     for (const loc of locations) {
       const marker = L.circleMarker([loc.lat, loc.lon], { ...styleFor('open', false), renderer });
       marker.on('click', () => onSelect(loc.id));
-      const edge = L.circleMarker([loc.lat, loc.lon], { ...EDGE, radius: STYLES.open.radius + EDGE_GROW, renderer });
-      edge.addTo(map);
       marker.addTo(map);
-      markers.set(loc.id, { marker, edge, kind: 'open', note: false, noteMarker: null, loc });
+      markers.set(loc.id, { marker, kind: 'open', note: false, noteMarker: null, loc });
     }
   }
 
@@ -69,12 +62,7 @@ export function createMap(el, { onSelect }) {
       const selected = id === selectedId;
       if (kind !== m.kind || selected !== m.selected) {
         m.marker.setStyle(styleFor(kind, selected));
-        const open = kind === 'open';
-        m.edge.setStyle({ fillOpacity: open ? 1 : 0, radius: styleFor('open', selected).radius + EDGE_GROW });
-        if (kind !== 'cleaned' || selected) {
-          m.edge.bringToFront();
-          m.marker.bringToFront();
-        }
+        if (kind !== 'cleaned' || selected) m.marker.bringToFront();
         m.kind = kind;
         m.selected = selected;
       }
