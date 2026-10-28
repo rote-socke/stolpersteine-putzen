@@ -554,3 +554,22 @@ a { color: var(--accent); }
 .segment input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .segment:has(input:checked) { background: var(--primary); color: var(--primary-text); font-weight: 600; }
 .segment:has(input:focus-visible) { outline: 3px solid var(--focus); outline-offset: -3px; }
+
+/* ---------- cleaning guide ---------- */
+
+.help-button { display: flex; align-items: center; justify-content: center; padding: 0; color: var(--accent); }
+.help h3 { margin: 16px 0 6px; font-size: 1.05rem; }
+.help ul, .help ol { margin: 0; padding-left: 1.4em; }
+.help li { margin: 4px 0; }
+.help p { margin: 0; }
+.help-warn {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border-left: 4px solid var(--danger);
+  background: var(--bg);
+}
+.help-warn strong { display: block; color: var(--danger); }
+.help-source { margin: 18px 0 0; padding-top: 12px; border-top: 1px solid var(--border); font-size: 0.85rem; }
+.help .help-links { display: flex; flex-direction: column; margin: 4px 0 0; padding: 0; list-style: none; font-size: 0.95rem; }
+.help-links li { margin: 0; }
+.help-links a { display: inline-block; padding: 10px 0; }

@@ -8,6 +8,7 @@ import {
   clearGroup, clearOrganizerCode, inviteLink, loadDeviceId, loadGroup, loadOrganizerCode, loadShareLocation,
   readJoinFragment, removeFragment, saveGroup, saveOrganizerCode, saveShareLocation,
 } from './group.js';
+import { renderHelp } from './help.js';
 import { createMap } from './map.js';
 import { initSheetDrag } from './sheet.js';
 import { getLang, onLangChange, setLang, t } from './i18n.js';
@@ -463,6 +464,38 @@ function navButton(loc, cls = '') {
   }, t('btn.navigation'));
 }
 
+function helpIcon() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  for (const [k, v] of Object.entries({
+    viewBox: '0 0 24 24', width: '22', height: '22', 'aria-hidden': 'true', fill: 'none',
+    stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+  })) svg.setAttribute(k, v);
+  for (const [tag, attrs] of [
+    ['circle', { cx: '12', cy: '12', r: '9.5' }],
+    ['path', { d: 'M9.2 9.3a2.9 2.9 0 1 1 4.4 2.5c-1 .6-1.6 1.2-1.6 2.4' }],
+    ['path', { d: 'M12 17.2v.1' }],
+  ]) {
+    const el = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+    svg.append(el);
+  }
+  return svg;
+}
+
+const helpDialog = $('help-dialog');
+function renderHelpDialog() {
+  $('help-dialog-title').textContent = t('help.title');
+  renderHelp($('help-dialog-body'));
+}
+function openHelp() {
+  renderHelpDialog();
+  helpDialog.showModal();
+}
+helpDialog.addEventListener('click', (e) => {
+  if (e.target === helpDialog || e.target.closest('[data-close]')) helpDialog.close();
+});
+
 function sheetHead(title, { onClose } = {}) {
   return h('div', { class: 'sheet-head' },
     h('button', {
@@ -470,6 +503,10 @@ function sheetHead(title, { onClose } = {}) {
       'aria-label': t('sheet.toggleAria', { title }),
       onclick: () => { collapsed = !collapsed; renderSheet(); },
     }, h('span', { class: 'sheet-grip', 'aria-hidden': 'true' }), h('span', { class: 'sheet-title' }, title)),
+    h('button', {
+      type: 'button', class: 'icon-button help-button', 'aria-haspopup': 'dialog',
+      'aria-label': t('help.button'), title: t('help.button'), onclick: openHelp,
+    }, helpIcon()),
     onClose && h('button', { type: 'button', class: 'icon-button', 'aria-label': t('common.close'), onclick: onClose }, '✕'),
   );
 }
@@ -818,6 +855,7 @@ function languageSwitch() {
 
 /** The language changed: redraw everything that is on screen, keeping the dialog open. */
 onLangChange(() => {
+  if (helpDialog.open) renderHelpDialog();
   renderGroupButton();
   document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute('content', t('meta.appTitle'));
   if (dialog.open) {
