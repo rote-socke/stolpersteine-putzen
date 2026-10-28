@@ -1,5 +1,6 @@
-// Drag the bottom sheet by its header: it follows the finger, then snaps to the
-// expanded or the collapsed state. Only the header is a grab area (touch-action: none
+// Drag the bottom sheet by its header: its height follows the finger (so the map
+// grows or shrinks with it and nothing empty shows between them), then it snaps to
+// the expanded or the collapsed state. Only the header is a grab area (touch-action: none
 // in CSS), so scrolling the list inside the sheet is untouched.
 
 const MOVE_START_PX = 6;      // below this a press is a tap and the button's click handles it
@@ -19,21 +20,26 @@ export function initSheetDrag(sheet, { isCollapsed, setCollapsed }) {
     return (head?.offsetHeight ?? 0) + parseFloat(getComputedStyle(sheet).paddingBottom);
   }
 
+  function setHeight(full, y) {
+    sheet.style.height = `${full - y}px`;
+  }
+
   function settle(target) {
-    const { travel, y } = drag;
+    const { travel, y, full } = drag;
     const finalY = target ? travel : 0;
     drag = null;
     const done = () => {
       sheet.style.transition = '';
-      sheet.style.transform = '';
+      sheet.style.height = '';
+      sheet.style.overflow = '';
       setCollapsed(target);
     };
     if (reducedMotion() || Math.abs(finalY - y) < 1) {
       done();
       return;
     }
-    sheet.style.transition = `transform ${SNAP_MS}ms ease-out`;
-    sheet.style.transform = `translateY(${finalY}px)`;
+    sheet.style.transition = `height ${SNAP_MS}ms ease-out`;
+    setHeight(full, finalY);
     let finished = false;
     const finish = () => {
       if (finished) return;
@@ -49,7 +55,7 @@ export function initSheetDrag(sheet, { isCollapsed, setCollapsed }) {
     if (!e.target.closest('.sheet-head') || e.target.closest('.icon-button')) return;
     drag = {
       id: e.pointerId, startY: e.clientY, lastY: e.clientY, lastT: e.timeStamp, v: 0,
-      started: false, startCollapsed: isCollapsed(), travel: 0, y: 0,
+      started: false, startCollapsed: isCollapsed(), travel: 0, y: 0, full: 0,
     };
   });
 
@@ -61,9 +67,13 @@ export function initSheetDrag(sheet, { isCollapsed, setCollapsed }) {
       if (drag.startCollapsed && dy > 0) return; // already collapsed: nothing to pull down
       drag.started = true;
       const small = collapsedHeight();
-      if (drag.startCollapsed) setCollapsed(false); // show the content so it can slide in
-      drag.travel = Math.max(0, sheet.offsetHeight - small);
+      if (drag.startCollapsed) setCollapsed(false); // render the content so it can slide in
+      drag.full = sheet.offsetHeight;
+      drag.travel = Math.max(0, drag.full - small);
       drag.y = drag.startCollapsed ? drag.travel : 0;
+      sheet.style.transition = 'none';
+      sheet.style.overflow = 'hidden';
+      setHeight(drag.full, drag.y); // from collapsed: same height as before, before the first paint
       try { sheet.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     }
     const dt = e.timeStamp - drag.lastT;
@@ -72,8 +82,7 @@ export function initSheetDrag(sheet, { isCollapsed, setCollapsed }) {
     drag.lastT = e.timeStamp;
     const base = drag.startCollapsed ? drag.travel : 0;
     drag.y = Math.min(drag.travel, Math.max(0, base + dy));
-    sheet.style.transition = 'none';
-    sheet.style.transform = `translateY(${drag.y}px)`;
+    setHeight(drag.full, drag.y);
   });
 
   function end(e) {
