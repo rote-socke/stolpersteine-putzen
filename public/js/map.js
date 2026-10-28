@@ -1,13 +1,15 @@
 // Leaflet map: one circle marker per location, styled by its status.
 /* global L */
 
-// Okabe-Ito based, readable for common colour-vision deficiencies:
-// open = blue, on the way = orange (filled for us, ring for others), cleaned = muted grey.
+// Marker colours mirror the --mk-* tokens in app.css (tiles stay light in dark
+// mode, so there is no dark variant). Open = tarnished grey with a strong dark
+// outline, on the way = blue (filled for us, ring for others), cleaned = brass.
+// Cleaned is smaller and drawn below the rest so open stones stay visible.
 const STYLES = {
-  open: { radius: 8, color: '#ffffff', weight: 2, fillColor: '#0072B2', fillOpacity: 1 },
-  own: { radius: 11, color: '#1a1a1a', weight: 3, fillColor: '#E69F00', fillOpacity: 1 },
-  other: { radius: 9, color: '#E69F00', weight: 4, fillColor: '#ffffff', fillOpacity: 1 },
-  cleaned: { radius: 6, color: '#ffffff', weight: 1.5, fillColor: '#8a9089', fillOpacity: 0.9 },
+  open: { radius: 8, color: '#1c1812', weight: 3, fillColor: '#8c867b', fillOpacity: 1 },
+  own: { radius: 11, color: '#06183a', weight: 3, fillColor: '#1a5fc0', fillOpacity: 1 },
+  other: { radius: 9, color: '#1a5fc0', weight: 4, fillColor: '#ffffff', fillOpacity: 1 },
+  cleaned: { radius: 5.5, color: '#4a3300', weight: 2, fillColor: '#e3b92d', fillOpacity: 1 },
 };
 
 export function createMap(el, { onSelect }) {
@@ -23,15 +25,14 @@ export function createMap(el, { onSelect }) {
   let selectedId = null;
   let userDot = null;
   let userHalo = null;
+  let selRing = null; // black ring with white halo around the selected marker
 
   const noteIcon = L.divIcon({ className: 'note-dot', iconSize: [10, 10], iconAnchor: [-4, 14] });
 
   function styleFor(kind, selected) {
     const s = { ...STYLES[kind] };
     if (selected) {
-      s.radius += 4;
-      s.color = '#000000';
-      s.weight = 4;
+      s.radius += 3;
     }
     return s;
   }
@@ -64,6 +65,20 @@ export function createMap(el, { onSelect }) {
         m.noteMarker = null;
       }
     }
+    updateSelection();
+  }
+
+  function updateSelection() {
+    const m = selectedId && markers.get(selectedId);
+    if (!m) {
+      if (selRing) { selRing.remove(); selRing = null; }
+      return;
+    }
+    const radius = STYLES[m.kind].radius + 3 + 6;
+    const style = { radius, color: '#000000', weight: 3, fill: false, interactive: false };
+    if (!selRing) selRing = L.circleMarker(m.marker.getLatLng(), { ...style, renderer }).addTo(map);
+    else selRing.setLatLng(m.marker.getLatLng()).setStyle(style);
+    selRing.bringToFront();
   }
 
   function select(id) {

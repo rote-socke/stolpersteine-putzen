@@ -328,7 +328,7 @@ function renderHome() {
             h('button', { type: 'button', class: 'linklike', onclick: () => openDetail(loc.id) }, loc.address)),
           h('p', { class: 'muted' }, stonesSummary(loc)),
           h('div', { class: 'actions' },
-            actionButton('Geputzt', () => act(loc.id, 'clean'), 'btn-primary'),
+            actionButton('Geputzt', () => act(loc.id, 'clean'), 'btn-clean'),
             actionButton('Abbrechen', () => act(loc.id, 'release')),
             navButton(loc),
           ),
@@ -394,11 +394,11 @@ function renderDetail(loc) {
   let actions = [];
   if (group) {
     if (s.status === 'open') {
-      actions = [actionButton('Wir gehen hin', () => act(loc.id, 'reserve'), 'btn-primary'),
+      actions = [actionButton('Wir gehen hin', () => act(loc.id, 'reserve'), 'btn-way'),
         actionButton('Geputzt', () => act(loc.id, 'clean'))];
     } else if (s.status === 'on_the_way') {
       actions = own
-        ? [actionButton('Geputzt', () => act(loc.id, 'clean'), 'btn-primary'), actionButton('Abbrechen', () => act(loc.id, 'release'))]
+        ? [actionButton('Geputzt', () => act(loc.id, 'clean'), 'btn-clean'), actionButton('Abbrechen', () => act(loc.id, 'release'))]
         : [actionButton('Geputzt', () => act(loc.id, 'clean'))];
     } else if (s.status === 'cleaned') {
       actions = [actionButton('Rückgängig', () => act(loc.id, 'reopen'))];
