@@ -74,7 +74,18 @@ which needs `X-Organizer-Code: <code>`. Reads need nothing.
 ```
 
 Error codes: `unauthorized` (401), `forbidden` (403), `not_found` (404,
-unknown location id), `invalid` (400), `taken`, `cleaned` (409).
+unknown location id or API path), `invalid` (400, or 405 for a wrong method),
+`taken`, `cleaned`, `name_taken` (409, group name already used, compared
+case-insensitively), `internal` (500).
+
+Details:
+
+- Reserving a location the group already holds restarts its 45 minutes.
+- `release` and `reopen` on a location that is already open answer with its
+  state instead of an error. `release` of another group's live reservation or
+  of a cleaned location is `403 forbidden`.
+- A note is trimmed; an all-whitespace note deletes it.
+- `GET /api/state` lists groups in creation order.
 
 ## Group invites
 
