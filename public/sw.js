@@ -2,7 +2,7 @@
 // Network-first, so every deploy is picked up at once while online; the cache
 // is only the fallback for no or bad reception. /api/* and cross-origin
 // requests (map tiles) are not intercepted at all.
-const CACHE = 'stolpersteine-putzen-v1';
+const CACHE = 'stolpersteine-putzen-v2';
 
 self.addEventListener('install', () => self.skipWaiting());
 

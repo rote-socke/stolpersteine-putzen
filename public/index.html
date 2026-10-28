@@ -1,17 +1,17 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Stolpersteine putzen</title>
-  <meta name="description" content="Gemeinsam Stolpersteine in Stuttgart putzen: Karte, nächste offene Steine, wer wohin unterwegs ist.">
+  <title>Cleaning Stolpersteine</title>
+  <meta name="description" content="Clean Stolpersteine in Stuttgart together: map, nearest open stones, who is heading where." data-i18n-content="meta.description">
   <meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#16181b" media="(prefers-color-scheme: dark)">
   <meta name="color-scheme" content="light dark">
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Steine putzen">
+  <meta name="apple-mobile-web-app-title" content="Cleaning stones" data-i18n-content="meta.appTitle">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
@@ -21,26 +21,26 @@
 </head>
 <body>
   <main class="map-wrap">
-    <div id="map" aria-label="Karte der Stolpersteine"></div>
+    <div id="map" aria-label="Map of the Stolpersteine" data-i18n-aria-label="map.aria"></div>
     <div class="map-controls">
       <button type="button" id="group-button" class="map-button group-button" aria-haspopup="dialog">
-        <span class="group-button-label" id="group-button-label">Keiner Gruppe beigetreten</span>
+        <span class="group-button-label" id="group-button-label" data-i18n="group.none">Not in a group</span>
       </button>
       <div class="legend" id="legend">
-      <button type="button" class="map-button legend-toggle" id="legend-toggle" aria-expanded="false" aria-controls="legend-body">Legende</button>
+      <button type="button" class="map-button legend-toggle" id="legend-toggle" aria-expanded="false" aria-controls="legend-body" data-i18n="legend.toggle">Legend</button>
       <ul class="legend-body" id="legend-body" hidden>
-        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5" class="lg-open"/></svg>Offen</li>
-        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" class="lg-own"/></svg>Ihr seid unterwegs</li>
-        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6" class="lg-other"/></svg>Andere Gruppe unterwegs</li>
-        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5" class="lg-cleaned"/></svg>Geputzt</li>
-        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="11" r="5" class="lg-open"/><circle cx="14" cy="5" r="3" class="lg-note"/></svg>Mit Notiz</li>
-        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6" class="lg-me"/></svg>Dein Standort</li>
-        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="5.5" class="lg-mate"/></svg>Mitglied deiner Gruppe</li>
-        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="5.5" class="lg-peer"/></svg>Andere Gruppe</li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5" class="lg-open"/></svg><span data-i18n="legend.open">Open</span></li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" class="lg-own"/></svg><span data-i18n="legend.own">You're on your way</span></li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6" class="lg-other"/></svg><span data-i18n="legend.other">Another group on its way</span></li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5" class="lg-cleaned"/></svg><span data-i18n="legend.cleaned">Cleaned</span></li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="11" r="5" class="lg-open"/><circle cx="14" cy="5" r="3" class="lg-note"/></svg><span data-i18n="legend.note">With note</span></li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6" class="lg-me"/></svg><span data-i18n="legend.me">Your location</span></li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="5.5" class="lg-mate"/></svg><span data-i18n="legend.mate">Member of your group</span></li>
+        <li><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="5.5" class="lg-peer"/></svg><span data-i18n="legend.peer">Another group</span></li>
       </ul>
       </div>
     </div>
-    <button type="button" class="locate-button" id="locate-button" aria-label="Mein Standort" title="Mein Standort">
+    <button type="button" class="locate-button" id="locate-button" aria-label="My location" title="My location" data-i18n-aria-label="locate.label" data-i18n-title="locate.label">
       <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
     </button>
   </main>
@@ -52,8 +52,8 @@
   <dialog class="dialog" id="group-dialog" aria-labelledby="group-dialog-title">
     <div class="dialog-inner">
       <div class="dialog-head">
-        <h2 id="group-dialog-title">Gruppe</h2>
-        <button type="button" class="icon-button" data-close aria-label="Schließen">&#x2715;</button>
+        <h2 id="group-dialog-title" data-i18n="group.dialogTitle">Group</h2>
+        <button type="button" class="icon-button" data-close aria-label="Close" data-i18n-aria-label="common.close">&#x2715;</button>
       </div>
       <div id="group-dialog-body"></div>
     </div>

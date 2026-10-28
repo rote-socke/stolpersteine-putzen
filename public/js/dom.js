@@ -1,4 +1,5 @@
 // Tiny DOM helpers: build elements without innerHTML, so data is never parsed as HTML.
+import { intlLocale } from './i18n.js';
 
 export function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -17,14 +18,21 @@ export function h(tag, props = {}, ...children) {
   return el;
 }
 
-const timeFmt = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
-const dayFmt = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' });
+/** replaceChildren() that skips null, undefined and false like h(), instead of printing them. */
+export function setChildren(el, ...children) {
+  el.replaceChildren(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
+}
 
-export const formatDayTime = (ms) => `${dayFmt.format(new Date(ms))} ${timeFmt.format(new Date(ms))}`;
+export const formatDayTime = (ms) => {
+  const d = new Date(ms);
+  const day = new Intl.DateTimeFormat(intlLocale(), { day: '2-digit', month: '2-digit' }).format(d);
+  const time = new Intl.DateTimeFormat(intlLocale(), { hour: '2-digit', minute: '2-digit' }).format(d);
+  return `${day} ${time}`;
+};
 
 export function formatDistance(m) {
-  if (m < 1000) return `${Math.round(m / 10) * 10} m`;
-  return `${(m / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1 })} km`;
+  if (m < 1000) return `${new Intl.NumberFormat(intlLocale()).format(Math.round(m / 10) * 10)} m`;
+  return `${(m / 1000).toLocaleString(intlLocale(), { maximumFractionDigits: 1 })} km`;
 }
 
 export function distanceMeters(a, b) {

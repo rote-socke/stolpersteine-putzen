@@ -10,14 +10,15 @@ import {
 } from './group.js';
 import { createMap } from './map.js';
 import { initSheetDrag } from './sheet.js';
-import { distanceMeters, formatDayTime, formatDistance, h, navigationUrl } from './dom.js';
+import { getLang, onLangChange, setLang, t } from './i18n.js';
+import { distanceMeters, formatDayTime, formatDistance, h, navigationUrl, setChildren } from './dom.js';
 
 const POLL_MS = 15000;
 const NEXT_COUNT = 10;
 const NOTE_MAX = 500;
 const SHARE_MS = 20000;         // at most one position upload per phone in this time
-const SEARCH_TOAST = 'Standort wird gesucht …';
-const GROUP_GONE = 'Deine Gruppe ist nicht mehr gültig (gelöscht oder neuer Link erzeugt). Bitte den aktuellen QR-Code deiner Gruppe scannen.';
+const searchToast = () => t('toast.searching');
+const groupGone = () => t('toast.groupGone');
 
 // ---------- state ----------
 
@@ -75,7 +76,7 @@ function stateOf(id) {
 }
 
 function groupName(s) {
-  return s.groupName ?? server.groups.find((g) => g.id === s.groupId)?.name ?? 'Eine Gruppe';
+  return s.groupName ?? server.groups.find((g) => g.id === s.groupId)?.name ?? t('group.fallbackName');
 }
 
 function kindOf(id) {
@@ -100,7 +101,7 @@ function ownReservation() {
 function stonesSummary(loc) {
   const names = loc.stones.map((s) => s.name);
   if (names.length === 1) return names[0];
-  return `${names.length} Steine · ${names.join(', ')}`;
+  return t('stones.summary', { count: names.length, names: names.join(', ') });
 }
 
 // ---------- map ----------
@@ -128,7 +129,6 @@ new ResizeObserver(() => document.documentElement.style.setProperty('--sheet-h',
 // ---------- geolocation ----------
 
 const STALE_MS = 60000;         // no fix for this long: ask for a fresh one
-const DENIED_HINT = 'Standort nicht erlaubt. Du kannst ihn in den Browser-Einstellungen freigeben.';
 let centerOnNextFix = false;
 let wantLocation = false;       // the user asked for location; restart when permission returns
 let lastFixAt = 0;
@@ -162,7 +162,7 @@ function stopLocating() {
 function onDenied() {
   stopLocating();
   if (position) setStale(true);
-  toast(DENIED_HINT, { error: true });
+  toast(t('toast.denied'), { error: true });
 }
 
 /** Asks for one fresh fix: the watch may be silent after location was switched off. */
@@ -182,7 +182,7 @@ function recheckPosition() {
 
 function startLocating({ center }) {
   if (!('geolocation' in navigator)) {
-    toast('Dein Gerät kann den Standort nicht bestimmen.', { error: true });
+    toast(t('toast.noGeolocation'), { error: true });
     return;
   }
   wantLocation = true;
@@ -210,7 +210,7 @@ function startLocating({ center }) {
       }
       if (!searchToastShown) {
         searchToastShown = true;
-        toast(SEARCH_TOAST);
+        toast(searchToast());
       }
     },
     { enableHighAccuracy: true, maximumAge: 10000 },
@@ -222,7 +222,7 @@ function startLocating({ center }) {
   }, 5000);
   if (!position && !searchToastShown) {
     searchToastShown = true;
-    toast(SEARCH_TOAST);
+    toast(searchToast());
   }
   updateLocateButton();
 }
@@ -233,7 +233,7 @@ function onPosition(p) {
   lastFixAt = Date.now();
   position = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy };
   searchToastShown = false;
-  hideToast(SEARCH_TOAST);
+  hideToast(searchToast());
   stale = false;
   mapApi.setUserStale(false);
   mapApi.setUserPosition(position.lat, position.lon, position.accuracy);
@@ -291,7 +291,7 @@ function sendPosition() {
     .catch((err) => {
       if (err instanceof ApiError && err.status === 401) {
         sharing = false;
-        dropGroup(GROUP_GONE);
+        dropGroup(groupGone());
         renderAll();
       }
     });
@@ -336,7 +336,7 @@ async function refresh() {
     if (typeof data.now === 'number') clockOffset = data.now - Date.now();
     if (connectionLost) {
       connectionLost = false;
-      toast('Wieder verbunden.');
+      toast(t('toast.reconnected'));
     }
     if (group) {
       const g = server.groups.find((x) => x.id === group.groupId);
@@ -346,7 +346,7 @@ async function refresh() {
     if (seq !== refreshSeq) return;
     if (!connectionLost) {
       connectionLost = true;
-      toast('Keine Verbindung. Du siehst den letzten bekannten Stand.', { error: true });
+      toast(t('toast.offline'), { error: true });
     }
   }
   await presence;
@@ -399,19 +399,19 @@ function dropGroup(message) {
 function handleError(err) {
   if (!(err instanceof ApiError)) {
     console.error(err);
-    toast('Etwas ist schiefgegangen. Bitte nochmal versuchen.', { error: true });
+    toast(t('toast.wrong'), { error: true });
     return;
   }
   const { status, data } = err;
-  if (status === 0) toast('Keine Verbindung. Bitte gleich nochmal versuchen.', { error: true });
-  else if (status === 401) dropGroup(GROUP_GONE);
-  else if (data.error === 'taken') toast(`${data.groupName ?? 'Eine andere Gruppe'} ist schon unterwegs dorthin.`, { error: true });
-  else if (data.error === 'cleaned') toast('Schon geputzt.', { error: true });
-  else if (data.error === 'name_taken') toast('Diesen Gruppennamen gibt es schon.', { error: true });
-  else if (status === 403) toast('Das darf nur die Gruppe, die dorthin unterwegs ist.', { error: true });
-  else if (status === 404) toast('Diesen Ort kennt der Server nicht.', { error: true });
-  else if (status === 400) toast('Die Eingabe passt nicht. Bitte prüfen.', { error: true });
-  else toast(`Fehler beim Server (${status}). Bitte nochmal versuchen.`, { error: true });
+  if (status === 0) toast(t('toast.network'), { error: true });
+  else if (status === 401) dropGroup(groupGone());
+  else if (data.error === 'taken') toast(t('toast.taken', { name: data.groupName ?? t('group.otherName') }), { error: true });
+  else if (data.error === 'cleaned') toast(t('toast.alreadyCleaned'), { error: true });
+  else if (data.error === 'name_taken') toast(t('toast.nameTaken'), { error: true });
+  else if (status === 403) toast(t('toast.forbidden'), { error: true });
+  else if (status === 404) toast(t('toast.notFound'), { error: true });
+  else if (status === 400) toast(t('toast.badInput'), { error: true });
+  else toast(t('toast.serverError', { status }), { error: true });
 }
 
 function setBusy(value) {
@@ -432,26 +432,19 @@ async function run(task) {
   }
 }
 
-const SUCCESS = {
-  reserve: 'Eingetragen: Ihr seid unterwegs.',
-  release: 'Reservierung aufgehoben.',
-  clean: 'Als geputzt eingetragen. Danke!',
-  reopen: 'Wieder als offen eingetragen.',
-};
-
 function act(id, action) {
   if (!group) return;
   if (action === 'reserve') {
     const own = ownReservation();
     if (own && own.id !== id
-      && !confirm(`Ihr seid schon unterwegs zu ${byId.get(own.id).address}. Stattdessen hierhin gehen?`)) return;
+      && !confirm(t('confirm.switch', { address: byId.get(own.id).address }))) return;
   }
-  if (action === 'reopen' && !confirm('Diesen Ort wieder als offen eintragen?')) return;
+  if (action === 'reopen' && !confirm(t('confirm.reopen'))) return;
   return run(async () => {
     try {
       const data = await locationAction(group.token, id, action);
       applyLocation(id, data.location);
-      toast(SUCCESS[action]);
+      toast(t(`success.${action}`));
     } finally {
       await refresh();
     }
@@ -467,17 +460,17 @@ function actionButton(label, onClick, cls = '') {
 function navButton(loc, cls = '') {
   return h('a', {
     class: `btn ${cls}`, href: navigationUrl(loc.lat, loc.lon), target: '_blank', rel: 'noopener',
-  }, 'Navigation');
+  }, t('btn.navigation'));
 }
 
 function sheetHead(title, { onClose } = {}) {
   return h('div', { class: 'sheet-head' },
     h('button', {
       type: 'button', class: 'sheet-toggle', 'aria-expanded': String(!collapsed),
-      'aria-label': `Liste ein-/ausklappen: ${title}`,
+      'aria-label': t('sheet.toggleAria', { title }),
       onclick: () => { collapsed = !collapsed; renderSheet(); },
     }, h('span', { class: 'sheet-grip', 'aria-hidden': 'true' }), h('span', { class: 'sheet-title' }, title)),
-    onClose && h('button', { type: 'button', class: 'icon-button', 'aria-label': 'Schließen', onclick: onClose }, '✕'),
+    onClose && h('button', { type: 'button', class: 'icon-button', 'aria-label': t('common.close'), onclick: onClose }, '✕'),
   );
 }
 
@@ -508,28 +501,28 @@ function setShareLocation(on) {
 
 function shareAsk() {
   const choose = (on) => { setShareLocation(on); renderSheet(); };
-  return h('div', { class: 'share-ask', role: 'group', 'aria-label': 'Standort teilen' },
-    h('p', { class: 'share-ask-title' }, 'Standort mit den Gruppen teilen?'),
-    h('p', { class: 'muted share-ask-text' }, 'Andere Gruppen sehen, wo ihr seid – nur solange die App offen ist.'),
+  return h('div', { class: 'share-ask', role: 'group', 'aria-label': t('share.askAria') },
+    h('p', { class: 'share-ask-title' }, t('share.askTitle')),
+    h('p', { class: 'muted share-ask-text' }, t('share.askText')),
     h('div', { class: 'actions' },
-      h('button', { type: 'button', class: 'btn btn-small btn-primary', onclick: () => choose(true) }, 'Teilen'),
-      h('button', { type: 'button', class: 'btn btn-small', onclick: () => choose(false) }, 'Nicht teilen')));
+      h('button', { type: 'button', class: 'btn btn-small btn-primary', onclick: () => choose(true) }, t('btn.share')),
+      h('button', { type: 'button', class: 'btn btn-small', onclick: () => choose(false) }, t('btn.dontShare'))));
 }
 
 function renderHome() {
   const own = ownReservation();
   if (own) {
     const loc = byId.get(own.id);
-    sheet.replaceChildren(
-      sheetHead('Ihr seid unterwegs'),
+    setChildren(sheet, 
+      sheetHead(t('home.onTheWay')),
       h('div', { class: 'sheet-body' },
         h('div', { class: 'reservation' },
-          h('p', { class: 'reservation-text' }, 'Zu ',
+          h('p', { class: 'reservation-text' }, t('home.to'),
             h('button', { type: 'button', class: 'linklike', onclick: () => openDetail(loc.id) }, loc.address)),
           h('p', { class: 'muted' }, stonesSummary(loc)),
           h('div', { class: 'actions' },
-            actionButton('Geputzt', () => act(loc.id, 'clean'), 'btn-clean'),
-            actionButton('Abbrechen', () => act(loc.id, 'release')),
+            actionButton(t('btn.cleaned'), () => act(loc.id, 'clean'), 'btn-clean'),
+            actionButton(t('btn.cancel'), () => act(loc.id, 'release')),
             navButton(loc),
           ),
         ),
@@ -552,13 +545,13 @@ function renderHome() {
     .sort((a, b) => a.d - b.d)
     .slice(0, NEXT_COUNT);
 
-  sheet.replaceChildren(
-    sheetHead('Nächste offene Steine'),
+  setChildren(sheet, 
+    sheetHead(t('home.next')),
     h('div', { class: 'sheet-body' },
-      !group && h('p', { class: 'hint' }, 'Zum Mitmachen den QR-Code deiner Gruppe scannen.'),
+      !group && h('p', { class: 'hint' }, t('home.joinHint')),
       h('div', { class: 'list-origin' },
-        h('span', { class: 'muted' }, !position ? 'Nach Entfernung zur Kartenmitte' : stale ? 'Nach Entfernung zum letzten bekannten Standort' : 'Nach Entfernung zu dir'),
-        (!position || stale) && h('button', { type: 'button', class: 'btn btn-small', onclick: () => startLocating({ center: false }) }, 'Meinen Standort nutzen'),
+        h('span', { class: 'muted' }, !position ? t('home.originCenter') : stale ? t('home.originStale') : t('home.originYou')),
+        (!position || stale) && h('button', { type: 'button', class: 'btn btn-small', onclick: () => startLocating({ center: false }) }, t('btn.useLocation')),
       ),
       next.length
         ? h('ol', { class: 'next-list' }, next.map(({ loc, d }) => h('li', {},
@@ -567,7 +560,7 @@ function renderHome() {
               h('span', { class: 'next-address' }, loc.address),
               h('span', { class: 'next-names' }, stonesSummary(loc))),
             h('span', { class: 'next-distance' }, formatDistance(d))))))
-        : h('p', { class: 'muted' }, 'Keine offenen Steine mehr. Danke für eure Arbeit.'),
+        : h('p', { class: 'muted' }, t('home.none')),
     ),
   );
 }
@@ -575,13 +568,13 @@ function renderHome() {
 function statusLine(s) {
   if (s.status === 'on_the_way') {
     const own = group && s.groupId === group.groupId;
-    const who = own ? 'Ihr seid unterwegs' : `${groupName(s)} ist unterwegs`;
+    const who = own ? t('status.own') : t('status.other', { name: groupName(s) });
     return { cls: own ? 'status-own' : 'status-other', text: who };
   }
   if (s.status === 'cleaned') {
-    return { cls: 'status-cleaned', text: `Geputzt von ${groupName(s)} am ${formatDayTime(s.updatedAt)}` };
+    return { cls: 'status-cleaned', text: t('status.cleaned', { name: groupName(s), when: formatDayTime(s.updatedAt) }) };
   }
-  return { cls: 'status-open', text: 'Offen' };
+  return { cls: 'status-open', text: t('status.open') };
 }
 
 let noteEditing = null; // location id whose note editor is open
@@ -594,14 +587,14 @@ function renderDetail(loc) {
   let actions = [];
   if (group) {
     if (s.status === 'open') {
-      actions = [actionButton('Wir gehen hin', () => act(loc.id, 'reserve'), 'btn-way'),
-        actionButton('Geputzt', () => act(loc.id, 'clean'))];
+      actions = [actionButton(t('btn.going'), () => act(loc.id, 'reserve'), 'btn-way'),
+        actionButton(t('btn.cleaned'), () => act(loc.id, 'clean'))];
     } else if (s.status === 'on_the_way') {
       actions = own
-        ? [actionButton('Geputzt', () => act(loc.id, 'clean'), 'btn-clean'), actionButton('Abbrechen', () => act(loc.id, 'release'))]
-        : [actionButton('Geputzt', () => act(loc.id, 'clean'))];
+        ? [actionButton(t('btn.cleaned'), () => act(loc.id, 'clean'), 'btn-clean'), actionButton(t('btn.cancel'), () => act(loc.id, 'release'))]
+        : [actionButton(t('btn.cleaned'), () => act(loc.id, 'clean'))];
     } else if (s.status === 'cleaned') {
-      actions = [actionButton('Rückgängig', () => act(loc.id, 'reopen'))];
+      actions = [actionButton(t('btn.undo'), () => act(loc.id, 'reopen'))];
     }
   }
 
@@ -615,12 +608,12 @@ function renderDetail(loc) {
   }
   const note = server.locations[loc.id]?.note ?? '';
 
-  sheet.replaceChildren(
+  setChildren(sheet, 
     sheetHead(loc.address, { onClose: closeDetail }),
     h('div', { class: 'sheet-body' },
       h('p', { class: `status ${status.cls}` }, status.text),
       h('div', { class: 'actions' }, actions, navButton(loc, actions.length ? '' : 'btn-primary')),
-      !group && h('p', { class: 'hint' }, 'Zum Mitmachen den QR-Code deiner Gruppe scannen.'),
+      !group && h('p', { class: 'hint' }, t('home.joinHint')),
       h('ul', { class: 'stones' }, loc.stones.map((st) => h('li', {},
         st.bioUrl
           ? h('a', { href: st.bioUrl, target: '_blank', rel: 'noopener' }, st.name)
@@ -629,12 +622,12 @@ function renderDetail(loc) {
           h('a', { href: l.url, target: '_blank', rel: 'noopener' }, l.label))) : null,
       ))),
       h('div', { class: 'note' },
-        note ? h('p', { class: 'note-text' }, h('strong', {}, 'Notiz: '), note) : null,
+        note ? h('p', { class: 'note-text' }, h('strong', {}, t('note.label')), note) : null,
         existingEditor ?? (group
           ? h('button', {
             type: 'button', class: 'btn btn-small',
             onclick: () => { noteEditing = loc.id; renderSheet(); sheet.querySelector('textarea')?.focus(); },
-          }, note ? 'Notiz bearbeiten' : 'Notiz hinzufügen')
+          }, note ? t('btn.editNote') : t('btn.addNote'))
           : null),
       ),
     ),
@@ -645,7 +638,7 @@ function renderDetail(loc) {
 }
 
 function noteEditor(id, note) {
-  const textarea = h('textarea', { maxlength: String(NOTE_MAX), rows: '3', 'aria-label': 'Notiz' });
+  const textarea = h('textarea', { maxlength: String(NOTE_MAX), rows: '3', 'aria-label': t('note.aria') });
   textarea.value = note;
   const counter = h('span', { class: 'muted' }, `${note.length}/${NOTE_MAX}`);
   textarea.addEventListener('input', () => { counter.textContent = `${textarea.value.length}/${NOTE_MAX}`; });
@@ -654,7 +647,7 @@ function noteEditor(id, note) {
       const data = await saveNote(group.token, id, textarea.value.trim().slice(0, NOTE_MAX));
       applyLocation(id, data.location);
       noteEditing = null;
-      toast('Notiz gespeichert.');
+      toast(t('toast.noteSaved'));
     } finally {
       await refresh();
     }
@@ -663,8 +656,8 @@ function noteEditor(id, note) {
     textarea,
     h('div', { class: 'note-editor-row' },
       counter,
-      h('button', { type: 'button', class: 'btn btn-small', onclick: () => { noteEditing = null; renderSheet(); } }, 'Verwerfen'),
-      h('button', { type: 'submit', class: 'btn btn-small btn-primary', 'data-action': '', disabled: busy }, 'Speichern')));
+      h('button', { type: 'button', class: 'btn btn-small', onclick: () => { noteEditing = null; renderSheet(); } }, t('btn.discardNote')),
+      h('button', { type: 'submit', class: 'btn btn-small btn-primary', 'data-action': '', disabled: busy }, t('btn.saveNote'))));
 }
 
 function openDetail(id) {
@@ -700,7 +693,7 @@ function adoptGroupInfo(name, namePending) {
 }
 
 function renderGroupButton() {
-  $('group-button-label').textContent = group ? group.groupName : 'Keiner Gruppe beigetreten';
+  $('group-button-label').textContent = group ? group.groupName : t('group.none');
   $('group-button').classList.toggle('has-group', Boolean(group));
 }
 
@@ -708,7 +701,7 @@ function qrSvg(text) {
   const qr = qrcode(0, 'M');
   qr.addData(text);
   qr.make();
-  return qr.createSvgTag({ cellSize: 4, margin: 16, scalable: true, alt: 'QR-Code zum Beitreten' });
+  return qr.createSvgTag({ cellSize: 4, margin: 16, scalable: true, alt: t('invite.qrAlt') });
 }
 
 function inviteSection(target) {
@@ -717,27 +710,27 @@ function inviteSection(target) {
   qr.innerHTML = qrSvg(link); // generated SVG from our own link, no user HTML
   const share = async () => {
     try {
-      await navigator.share({ title: `Stolpersteine putzen: ${target.groupName}`, text: `Tritt der Gruppe ${target.groupName} bei:`, url: link });
+      await navigator.share({ title: t('invite.shareTitle', { name: target.groupName }), text: t('invite.shareText', { name: target.groupName }), url: link });
     } catch (err) {
-      if (err?.name !== 'AbortError') toast('Teilen hat nicht geklappt. Nutze „Link kopieren“.', { error: true });
+      if (err?.name !== 'AbortError') toast(t('toast.shareFailed'), { error: true });
     }
   };
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(link);
-      toast('Link kopiert.');
+      toast(t('toast.copied'));
     } catch {
       linkField.select();
-      toast('Bitte den Link markieren und kopieren.', { error: true });
+      toast(t('toast.copyManually'), { error: true });
     }
   };
-  const linkField = h('input', { class: 'invite-link', readonly: true, value: link, 'aria-label': 'Einladungslink', onfocus: (e) => e.target.select() });
+  const linkField = h('input', { class: 'invite-link', readonly: true, value: link, 'aria-label': t('invite.linkAria'), onfocus: (e) => e.target.select() });
   return h('div', { class: 'invite' },
-    h('p', {}, 'Andere scannen diesen Code mit der Handykamera und sind dann in eurer Gruppe.'),
+    h('p', {}, t('invite.text')),
     qr,
     h('div', { class: 'actions' },
-      typeof navigator.share === 'function' && h('button', { type: 'button', class: 'btn btn-primary', onclick: share }, 'Link teilen'),
-      h('button', { type: 'button', class: 'btn', onclick: copy }, 'Link kopieren')),
+      typeof navigator.share === 'function' && h('button', { type: 'button', class: 'btn btn-primary', onclick: share }, t('invite.share')),
+      h('button', { type: 'button', class: 'btn', onclick: copy }, t('invite.copy'))),
     linkField,
   );
 }
@@ -751,10 +744,9 @@ function shareSwitch() {
     },
   });
   return h('div', {},
-    h('label', { class: 'share-row' }, input, 'Meinen Standort teilen'),
+    h('label', { class: 'share-row' }, input, t('share.switch')),
     h('p', { class: 'muted share-note' },
-      'Deine Position ist nur für Mitglieder von Gruppen und die Orga sichtbar, solange die App geöffnet ist. '
-      + 'Es wird nur die letzte Position gespeichert, höchstens 10 Minuten lang, ohne Verlauf.'));
+      t('share.note')));
 }
 
 // ---------- install ----------
@@ -774,7 +766,7 @@ window.addEventListener('appinstalled', () => {
 });
 
 function installSection() {
-  if (isStandalone()) return document.createDocumentFragment(); // replaceChildren() would print "null"
+  if (isStandalone()) return null;
   if (installEvent) {
     return h('div', { class: 'actions' },
       h('button', {
@@ -786,28 +778,56 @@ function installSection() {
           await e.userChoice;
           renderGroupDialog();
         },
-      }, 'App installieren'));
+      }, t('install.button')));
   }
-  if (isIosSafari()) return h('p', { class: 'muted' }, 'App installieren: Teilen → Zum Home-Bildschirm');
+  if (isIosSafari()) return h('p', { class: 'muted' }, t('install.ios'));
   return document.createDocumentFragment();
 }
+
+const LANG_NAMES = { de: 'Deutsch', en: 'English' };
+
+function languageSwitch() {
+  const current = getLang();
+  return h('fieldset', { class: 'lang-switch' },
+    h('legend', {}, t('lang.label')),
+    h('div', { class: 'segments' }, Object.entries(LANG_NAMES).map(([code, name]) => h('label', { class: 'segment', lang: code },
+      h('input', {
+        type: 'radio', name: 'lang', value: code, checked: code === current,
+        onchange: () => setLang(code),
+      }),
+      h('span', {}, name)))));
+}
+
+/** The language changed: redraw everything that is on screen, keeping the dialog open. */
+onLangChange(() => {
+  renderGroupButton();
+  document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute('content', t('meta.appTitle'));
+  if (dialog.open) {
+    if (dialogView === 'group') renderGroupDialog();
+    else if (dialogView === 'naming') renderNaming();
+    else renderAll();
+    $('group-dialog-body').querySelector('input[name="lang"]:checked')?.focus();
+  } else {
+    renderAll();
+  }
+});
 
 function renderGroupDialog() {
   const body = $('group-dialog-body');
   if (group) {
     dialogView = 'group';
     $('group-dialog-title').textContent = group.groupName;
-    body.replaceChildren(
-      h('p', { class: 'muted' }, 'Du bist in dieser Gruppe.'),
+    setChildren(body, 
+      h('p', { class: 'muted' }, t('dialog.member')),
       group.namePending && h('div', { class: 'actions' },
-        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => renderNaming() }, 'Gruppennamen festlegen')),
+        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => renderNaming() }, t('dialog.setName'))),
       inviteSection(group),
       shareSwitch(),
       h('div', { class: 'actions' },
         h('button', {
           type: 'button', class: 'btn btn-danger',
           onclick: () => {
-            if (!confirm(`Gruppe „${group.groupName}“ auf diesem Handy verlassen? Du kannst nur über den QR-Code bzw. Einladungslink wieder beitreten.`)) return;
+            if (!confirm(t('confirm.leave', { name: group.groupName }))) return;
             group = null;
             clearGroup();
             syncSharing();
@@ -815,18 +835,20 @@ function renderGroupDialog() {
             renderGroupButton();
             renderGroupDialog();
             renderAll();
-            toast('Du hast die Gruppe verlassen.');
+            toast(t('toast.left'));
           },
-        }, 'Gruppe verlassen')),
+        }, t('dialog.leave'))),
+      languageSwitch(),
       installSection(),
       orgaEntry(),
     );
   } else {
     dialogView = 'group';
-    $('group-dialog-title').textContent = 'Keiner Gruppe beigetreten';
-    body.replaceChildren(
-      h('p', { class: 'hint' }, 'Zum Mitmachen den QR-Code deiner Gruppe scannen.'),
-      h('p', { class: 'muted' }, 'Ohne Gruppe kannst du die Karte nur ansehen. Den Code hat jemand aus deiner Gruppe oder die Orga.'),
+    $('group-dialog-title').textContent = t('group.none');
+    setChildren(body, 
+      h('p', { class: 'hint' }, t('home.joinHint')),
+      h('p', { class: 'muted' }, t('dialog.viewOnly')),
+      languageSwitch(),
       installSection(),
       orgaEntry(),
     );
@@ -850,9 +872,9 @@ function maybeAskName() {
 function renderNaming() {
   nameAsked = true;
   dialogView = 'naming';
-  $('group-dialog-title').textContent = 'Wie soll eure Gruppe heißen?';
-  const input = h('input', { type: 'text', maxlength: '40', required: true, id: 'self-name', autocomplete: 'off', placeholder: 'z. B. Neckarputzer' });
-  const error = h('p', { class: 'form-error', role: 'alert', hidden: true }, 'Den Namen gibt es schon.');
+  $('group-dialog-title').textContent = t('naming.title');
+  const input = h('input', { type: 'text', maxlength: '40', required: true, id: 'self-name', autocomplete: 'off', placeholder: t('naming.placeholder') });
+  const error = h('p', { class: 'form-error', role: 'alert', hidden: true }, t('naming.taken'));
   const submit = async (e) => {
     e.preventDefault();
     const name = input.value.trim();
@@ -865,7 +887,7 @@ function renderNaming() {
         saveGroup(group);
         renderGroupButton();
         renderGroupDialog();
-        toast(`Eure Gruppe heißt jetzt „${res.name}“.`);
+        toast(t('toast.nowNamed', { name: res.name }));
         refresh();
       } catch (err) {
         if (err instanceof ApiError && err.data.error === 'name_taken') {
@@ -876,19 +898,19 @@ function renderNaming() {
           saveGroup(group);
           renderGroupButton();
           renderGroupDialog();
-          toast(`Eure Gruppe heißt schon „${err.data.name}“.`);
+          toast(t('toast.alreadyNamed', { name: err.data.name }));
         } else {
           throw err;
         }
       }
     });
   };
-  $('group-dialog-body').replaceChildren(
+  setChildren($('group-dialog-body'), 
     h('form', { class: 'form', onsubmit: submit },
-      h('label', { for: 'self-name' }, 'Gruppenname'), input, error,
-      h('p', { class: 'hint name-warning' }, 'Der Name kann danach nicht mehr geändert werden – nur noch von der Orga.'),
-      h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, 'Namen festlegen'),
-      h('button', { type: 'button', class: 'btn', onclick: () => dialog.close() }, 'Später')),
+      h('label', { for: 'self-name' }, t('naming.label')), input, error,
+      h('p', { class: 'hint name-warning' }, t('naming.warning')),
+      h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, t('naming.submit')),
+      h('button', { type: 'button', class: 'btn', onclick: () => dialog.close() }, t('naming.later'))),
   );
   input.focus();
 }
@@ -897,7 +919,7 @@ function renderNaming() {
 
 function orgaEntry() {
   return h('div', { class: 'create' },
-    h('button', { type: 'button', class: 'btn', onclick: () => (organizerCode ? showOrga() : renderOrgaLogin()) }, 'Organisation'));
+    h('button', { type: 'button', class: 'btn', onclick: () => (organizerCode ? showOrga() : renderOrgaLogin()) }, t('orga.title')));
 }
 
 /** Runs an organizer request; a 401 means the code is gone, so forget it and ask again. */
@@ -909,19 +931,19 @@ function orgaTask(task) {
       if (!(err instanceof ApiError && err.status === 401)) throw err;
       organizerCode = null;
       clearOrganizerCode();
-      toast('Der Orga-Code stimmt nicht (mehr). Bitte neu eingeben.', { error: true });
+      toast(t('toast.orgaCodeWrong'), { error: true });
       renderOrgaLogin();
     }
   });
 }
 
 function orgaBack() {
-  return h('button', { type: 'button', class: 'btn btn-small', onclick: renderGroupDialog }, '‹ Zurück');
+  return h('button', { type: 'button', class: 'btn btn-small', onclick: renderGroupDialog }, t('common.back'));
 }
 
 function renderOrgaLogin() {
   dialogView = 'orga';
-  $('group-dialog-title').textContent = 'Organisation';
+  $('group-dialog-title').textContent = t('orga.title');
   const code = h('input', { type: 'password', autocomplete: 'off', required: true, id: 'org-code' });
   const submit = (e) => {
     e.preventDefault();
@@ -931,16 +953,16 @@ function renderOrgaLogin() {
       const data = await orgaGroups(value);
       organizerCode = value;
       saveOrganizerCode(value);
-      toast('Orga-Modus ist an.');
+      toast(t('toast.orgaOn'));
       renderOrga(data.groups);
       refresh();
     });
   };
-  $('group-dialog-body').replaceChildren(
-    h('p', { class: 'muted' }, 'Mit dem Orga-Code legst du Gruppen an und verwaltest ihre Einladungen.'),
+  setChildren($('group-dialog-body'), 
+    h('p', { class: 'muted' }, t('orga.intro')),
     h('form', { class: 'form', onsubmit: submit },
-      h('label', { for: 'org-code' }, 'Orga-Code'), code,
-      h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, 'Weiter')),
+      h('label', { for: 'org-code' }, t('orga.code')), code,
+      h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, t('orga.continue'))),
     h('div', { class: 'actions' }, orgaBack()),
   );
 }
@@ -953,42 +975,42 @@ function showOrga() {
   });
 }
 
-function progressLine(done, total, label) {
+function progressLine(done, total, labelKey) {
   return h('div', { class: 'progress' },
-    h('p', { class: 'progress-text' }, h('strong', {}, `${done} von ${total}`), ` ${label} geputzt`),
+    h('p', { class: 'progress-text' }, h('strong', {}, t('orga.progressCount', { done, total })), ` ${t(labelKey)}`),
     h('div', { class: 'progress-bar', 'aria-hidden': 'true' },
       h('div', { class: 'progress-fill', style: `width: ${total ? Math.round((done / total) * 100) : 0}%` })));
 }
 
 function renderOrga(groups) {
   dialogView = 'orga';
-  $('group-dialog-title').textContent = 'Organisation';
+  $('group-dialog-title').textContent = t('orga.title');
   const cleaned = (list) => list.filter((l) => stateOf(l.id).status === 'cleaned').length;
   const cannstatt = locations.filter((l) => l.district === 'cannstatt');
 
-  const nameInput = h('input', { type: 'text', maxlength: '40', id: 'group-name', placeholder: 'z. B. Gruppe A' });
+  const nameInput = h('input', { type: 'text', maxlength: '40', id: 'group-name', placeholder: t('orga.groupPlaceholder') });
   const create = (e) => {
     e.preventDefault();
     const n = nameInput.value.trim();
     orgaTask(async () => {
       const g = await createGroup(organizerCode, n);
-      toast(`Gruppe „${g.name}“ angelegt.`);
+      toast(t('toast.groupCreated', { name: g.name }));
       showInvite({ groupId: g.id, groupName: g.name, token: g.token });
     });
   };
 
-  $('group-dialog-body').replaceChildren(
-    progressLine(cleaned(cannstatt), cannstatt.length, 'Cannstatter Adressen'),
-    progressLine(cleaned(locations), locations.length, 'Adressen insgesamt'),
+  setChildren($('group-dialog-body'), 
+    progressLine(cleaned(cannstatt), cannstatt.length, 'orga.progressCannstatt'),
+    progressLine(cleaned(locations), locations.length, 'orga.progressAll'),
     groups.length
       ? h('ul', { class: 'orga-groups' }, groups.map((g) => orgaGroupItem(g)))
-      : h('p', { class: 'muted' }, 'Noch keine Gruppen.'),
+      : h('p', { class: 'muted' }, t('orga.noGroups')),
     h('details', { class: 'create' },
-      h('summary', {}, 'Neue Gruppe anlegen'),
+      h('summary', {}, t('orga.newGroup')),
       h('form', { class: 'form', onsubmit: create },
-        h('label', { for: 'group-name' }, 'Name der Gruppe (optional)'), nameInput,
-        h('p', { class: 'muted form-hint' }, 'Leer lassen: die Gruppe gibt sich beim Beitreten selbst einen Namen.'),
-        h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, 'Gruppe anlegen'))),
+        h('label', { for: 'group-name' }, t('orga.groupName')), nameInput,
+        h('p', { class: 'muted form-hint' }, t('orga.nameHint')),
+        h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, t('orga.createGroup')))),
     h('div', { class: 'actions' },
       orgaBack(),
       h('button', {
@@ -997,9 +1019,9 @@ function renderOrga(groups) {
           organizerCode = null;
           clearOrganizerCode();
           renderGroupDialog();
-          toast('Orga-Modus beendet.');
+          toast(t('toast.orgaOff'));
         },
-      }, 'Orga-Modus beenden')),
+      }, t('orga.end'))),
   );
 }
 
@@ -1010,26 +1032,26 @@ function orgaGroupItem(g) {
   return h('li', { class: 'orga-group' },
     h('div', { class: 'orga-group-head' },
       h('strong', { class: 'orga-group-name' }, g.name),
-      h('span', { class: 'muted' }, `${g.cleanedCount} geputzt`)),
-    target && h('p', { class: 'muted orga-group-way' }, `unterwegs zu ${target.address}`),
+      h('span', { class: 'muted' }, t('orga.cleanedCount', { count: g.cleanedCount }))),
+    target && h('p', { class: 'muted orga-group-way' }, t('orga.wayTo', { address: target.address })),
     h('div', { class: 'actions' },
-      btn('Einladen', () => orgaTask(async () => {
+      btn(t('orga.invite'), () => orgaTask(async () => {
         const inv = await orgaInvite(organizerCode, g.id);
         showInvite({ groupId: inv.id, groupName: inv.name, token: inv.token });
       })),
-      btn('Beitreten', () => orgaTask(async () => {
+      btn(t('orga.join'), () => orgaTask(async () => {
         const inv = await orgaInvite(organizerCode, g.id);
         group = { groupId: inv.id, groupName: inv.name, namePending: g.namePending === true, token: inv.token };
         saveGroup(group);
         renderGroupButton();
-        toast(`Du bist jetzt in der Gruppe „${inv.name}“.`);
+        toast(t('toast.joined', { name: inv.name }));
         refresh();
         nameAsked = false;
         if (group.namePending) renderNaming();
         else await reloadOrga();
       })),
-      btn('Umbenennen', () => {
-        const name = prompt('Neuer Name der Gruppe', g.name)?.trim();
+      btn(t('orga.rename'), () => {
+        const name = prompt(t('prompt.rename'), g.name)?.trim();
         if (!name || name === g.name) return;
         return orgaTask(async () => {
           const res = await orgaRename(organizerCode, g.id, name);
@@ -1038,13 +1060,13 @@ function orgaGroupItem(g) {
             saveGroup(group);
             renderGroupButton();
           }
-          toast('Gruppe umbenannt.');
+          toast(t('toast.renamed'));
           refresh();
           await reloadOrga();
         });
       }),
-      btn('Neuen Link erzeugen', () => {
-        if (!confirm(`Neuen Link für „${g.name}“ erzeugen? Alte QR-Codes funktionieren dann nicht mehr.`)) return;
+      btn(t('orga.rotate'), () => {
+        if (!confirm(t('confirm.rotate', { name: g.name }))) return;
         return orgaTask(async () => {
           const inv = await orgaRotate(organizerCode, g.id);
           // Keep this phone in the group if it was in it.
@@ -1052,13 +1074,13 @@ function orgaGroupItem(g) {
             group = { ...group, token: inv.token };
             saveGroup(group);
           }
-          toast('Neuer Link erzeugt.');
+          toast(t('toast.newLink'));
           showInvite({ groupId: inv.id, groupName: inv.name, token: inv.token });
         });
       }),
-      btn('Löschen', () => {
-        const way = g.reservation ? ' Eine laufende Reservierung wird freigegeben.' : '';
-        if (!confirm(`Gruppe „${g.name}“ löschen? Geputzte Steine bleiben markiert.${way}`)) return;
+      btn(t('orga.delete'), () => {
+        const way = g.reservation ? t('confirm.deleteWay') : '';
+        if (!confirm(t('confirm.delete', { name: g.name }) + way)) return;
         return orgaTask(async () => {
           await orgaDelete(organizerCode, g.id);
           if (group?.groupId === g.id) {
@@ -1066,7 +1088,7 @@ function orgaGroupItem(g) {
             clearGroup();
             renderGroupButton();
           }
-          toast(`Gruppe „${g.name}“ gelöscht.`);
+          toast(t('toast.groupDeleted', { name: g.name }));
           refresh();
           await reloadOrga();
         });
@@ -1083,9 +1105,9 @@ async function reloadOrga() {
 function showInvite(target) {
   dialogView = 'orga';
   $('group-dialog-title').textContent = target.groupName;
-  $('group-dialog-body').replaceChildren(
+  setChildren($('group-dialog-body'), 
     inviteSection(target),
-    h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn btn-small', onclick: showOrga }, '‹ Zurück zur Organisation')),
+    h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn btn-small', onclick: showOrga }, t('orga.backToOrga'))),
   );
 }
 
@@ -1107,16 +1129,16 @@ async function handleJoin() {
     saveGroup(group);
     removeFragment();
     renderGroupButton();
-    toast(`Du bist jetzt in der Gruppe „${me.name}“.`);
+    toast(t('toast.joined', { name: me.name }));
     nameAsked = false;
     maybeAskName();
   } catch (err) {
     if (err instanceof ApiError && err.status === 0) {
       // Keep the fragment so a reload can try again.
-      toast('Beitreten hat nicht geklappt: keine Verbindung. Lade die Seite gleich neu.', { error: true });
+      toast(t('toast.joinOffline'), { error: true });
     } else {
       removeFragment();
-      toast('Dieser Einladungslink ist nicht gültig. Bitte den QR-Code deiner Gruppe neu scannen.', { error: true });
+      toast(t('toast.joinInvalid'), { error: true });
     }
   }
 }
@@ -1129,7 +1151,7 @@ async function checkStoredGroup() {
     maybeAskName();
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
-      dropGroup(GROUP_GONE);
+      dropGroup(groupGone());
       renderAll();
     }
   }
@@ -1150,7 +1172,7 @@ async function start() {
     locations = await loadLocations();
   } catch (err) {
     console.error(err);
-    toast('Die Liste der Stolpersteine konnte nicht geladen werden. Bitte Seite neu laden.', { error: true });
+    toast(t('toast.loadFailed'), { error: true });
     mapApi.fitTo([]);
     return;
   }
