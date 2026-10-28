@@ -44,7 +44,8 @@ export async function api(method, path, { token, organizerCode, body } = {}) {
 export const getState = () => api('GET', '/api/state');
 export const getMe = (token) => api('GET', '/api/groups/me', { token });
 export const createGroup = (organizerCode, name) =>
-  api('POST', '/api/groups', { organizerCode, body: { name } });
+  api('POST', '/api/groups', { organizerCode, body: name ? { name } : {} });
+export const nameGroup = (token, name) => api('PUT', '/api/groups/me/name', { token, body: { name } });
 
 const orgaPath = (id, action = '') => `/api/orga/groups/${encodeURIComponent(id)}${action}`;
 export const orgaGroups = (organizerCode) => api('GET', '/api/orga/groups', { organizerCode });

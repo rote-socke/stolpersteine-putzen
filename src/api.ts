@@ -27,6 +27,9 @@ interface GroupRow extends Group {
   token_version: number;
   token_hash: string;
 }
+interface AuthGroup extends Group {
+  name_pending: number;
+}
 interface StateRow {
   location_id: string;
   status: 'open' | 'on_the_way' | 'cleaned';
@@ -114,12 +117,14 @@ async function readJson(request: Request): Promise<Record<string, unknown>> {
 export function createApi(opts: ApiOptions) {
   const now = opts.now ?? Date.now;
 
-  async function authenticate(request: Request, env: Env): Promise<Group> {
+  async function authenticate(request: Request, env: Env): Promise<AuthGroup> {
     const m = /^Bearer (\S+)$/.exec(request.headers.get('authorization') ?? '');
     if (!m) throw fail(401, 'unauthorized');
-    const group = await env.DB.prepare('SELECT id, name FROM groups WHERE token_hash = ? AND deleted_at IS NULL')
+    const group = await env.DB.prepare(
+      'SELECT id, name, name_pending FROM groups WHERE token_hash = ? AND deleted_at IS NULL',
+    )
       .bind(await sha256(m[1]))
-      .first<Group>();
+      .first<AuthGroup>();
     if (!group) throw fail(401, 'unauthorized');
     return group;
   }
@@ -179,8 +184,8 @@ export function createApi(opts: ApiOptions) {
     const [states, notes, groups] = await Promise.all([
       env.DB.prepare('SELECT * FROM location_state').all<StateRow>(),
       env.DB.prepare('SELECT * FROM notes').all<NoteRow>(),
-      env.DB.prepare('SELECT id, name, deleted_at FROM groups ORDER BY created_at').all<
-        Group & { deleted_at: number | null }
+      env.DB.prepare('SELECT id, name, name_pending, deleted_at FROM groups ORDER BY created_at').all<
+        AuthGroup & { deleted_at: number | null }
       >(),
     ]);
     const names = nameMap(groups.results);
@@ -191,7 +196,7 @@ export function createApi(opts: ApiOptions) {
       const s = toState(rowById.get(id), noteById.get(id), names, t);
       if (s) locations[id] = s;
     }
-    const live = groups.results.filter((g) => g.deleted_at === null).map(({ id, name }) => ({ id, name }));
+    const live = groups.results.filter((g) => g.deleted_at === null).map((g) => ({ id: g.id, name: g.name, namePending: g.name_pending === 1 }));
     return json({ now: t, groups: live, locations });
   }
 
@@ -202,10 +207,13 @@ export function createApi(opts: ApiOptions) {
     }
   }
 
-  async function readName(request: Request): Promise<string> {
+  /** The trimmed name; '' when the body has none and `optional` is set. */
+  async function readName(request: Request, optional = false): Promise<string> {
     const body = await readJson(request);
-    const name = typeof body.name === 'string' ? body.name.trim() : '';
-    if (name.length < 1 || name.length > NAME_MAX) throw fail(400, 'invalid');
+    if (optional && (body.name === undefined || body.name === null)) return '';
+    if (typeof body.name !== 'string') throw fail(400, 'invalid');
+    const name = body.name.trim();
+    if (name.length > NAME_MAX || (name.length < 1 && !optional)) throw fail(400, 'invalid');
     return name;
   }
 
@@ -216,19 +224,63 @@ export function createApi(opts: ApiOptions) {
 
   async function createGroup(request: Request, env: Env): Promise<Response> {
     await requireOrganizer(request, env);
-    const name = await readName(request);
+    const given = await readName(request, true);
     const id = `g_${randomId(9)}`;
     const token = await deriveToken(env, id, 0);
-    try {
-      await env.DB.prepare(
-        'INSERT INTO groups (id, name, name_key, token_hash, created_at) VALUES (?, ?, ?, ?, ?)',
+    const tokenHash = await sha256(token);
+    const insert = (name: string, pending: number) =>
+      env.DB.prepare(
+        'INSERT INTO groups (id, name, name_key, name_pending, token_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)',
       )
-        .bind(id, name, name.toLowerCase(), await sha256(token), now())
+        .bind(id, name, name.toLowerCase(), pending, tokenHash, now())
+        .run();
+    if (given) {
+      try {
+        await insert(given, 0);
+      } catch (e) {
+        throw nameTaken(e);
+      }
+      return json({ id, name: given, namePending: false, token }, 201);
+    }
+    // Placeholder: the lowest free "Gruppe N". A concurrent insert may take it first, so retry.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const { results } = await env.DB.prepare("SELECT name_key FROM groups WHERE name_key LIKE 'gruppe %'").all<{
+        name_key: string;
+      }>();
+      const used = new Set(results.map((r) => r.name_key));
+      let n = 1;
+      while (used.has(`gruppe ${n}`)) n++;
+      try {
+        await insert(`Gruppe ${n}`, 1);
+        return json({ id, name: `Gruppe ${n}`, namePending: true, token }, 201);
+      } catch (e) {
+        if (!/UNIQUE/i.test(String(e instanceof Error ? e.message : e))) throw e;
+      }
+    }
+    throw fail(409, 'name_taken');
+  }
+
+  /** A group with a placeholder name chooses its own, once. */
+  async function nameSelf(request: Request, env: Env, group: AuthGroup): Promise<Response> {
+    const name = await readName(request);
+    let res;
+    try {
+      res = await env.DB.prepare(
+        'UPDATE groups SET name = ?, name_key = ?, name_pending = 0 WHERE id = ? AND name_pending = 1 AND deleted_at IS NULL',
+      )
+        .bind(name, name.toLowerCase(), group.id)
         .run();
     } catch (e) {
       throw nameTaken(e);
     }
-    return json({ id, name, token }, 201);
+    if (res.meta.changes === 0) {
+      const cur = await env.DB.prepare('SELECT name FROM groups WHERE id = ? AND deleted_at IS NULL')
+        .bind(group.id)
+        .first<{ name: string }>();
+      if (!cur) throw fail(401, 'unauthorized');
+      throw fail(409, 'name_locked', { name: cur.name });
+    }
+    return json({ id: group.id, name, namePending: false });
   }
 
   // ---------- organizer ----------
@@ -236,8 +288,8 @@ export function createApi(opts: ApiOptions) {
   async function listGroups(env: Env): Promise<Response> {
     const t = now();
     const [groups, cleaned, reserved] = await Promise.all([
-      env.DB.prepare('SELECT id, name, created_at FROM groups WHERE deleted_at IS NULL ORDER BY created_at').all<
-        Group & { created_at: number }
+      env.DB.prepare('SELECT id, name, name_pending, created_at FROM groups WHERE deleted_at IS NULL ORDER BY created_at').all<
+        AuthGroup & { created_at: number }
       >(),
       env.DB.prepare("SELECT group_id, COUNT(*) AS n FROM location_state WHERE status = 'cleaned' GROUP BY group_id").all<{
         group_id: string;
@@ -257,6 +309,7 @@ export function createApi(opts: ApiOptions) {
         return {
           id: g.id,
           name: g.name,
+          namePending: g.name_pending === 1,
           createdAt: g.created_at,
           cleanedCount: counts.get(g.id) ?? 0,
           reservation: r ? { locationId: r.location_id, expiresAt: r.updated_at + RESERVATION_MS } : null,
@@ -305,7 +358,7 @@ export function createApi(opts: ApiOptions) {
     const g = await findGroup(env, id);
     const name = await readName(request);
     try {
-      await env.DB.prepare('UPDATE groups SET name = ?, name_key = ? WHERE id = ?')
+      await env.DB.prepare('UPDATE groups SET name = ?, name_key = ?, name_pending = 0 WHERE id = ?')
         .bind(name, name.toLowerCase(), g.id)
         .run();
     } catch (e) {
@@ -474,7 +527,11 @@ export function createApi(opts: ApiOptions) {
     if (path === '/api/groups' && method === 'POST') return createGroup(request, env);
     if (path === '/api/groups/me' && method === 'GET') {
       const g = await authenticate(request, env);
-      return json({ id: g.id, name: g.name });
+      return json({ id: g.id, name: g.name, namePending: g.name_pending === 1 });
+    }
+    if (path === '/api/groups/me/name') {
+      if (method !== 'PUT') throw fail(405, 'invalid');
+      return nameSelf(request, env, await authenticate(request, env));
     }
     if (path === '/api/presence') {
       if (method === 'GET') return getPresence(request, env);

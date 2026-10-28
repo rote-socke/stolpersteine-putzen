@@ -52,7 +52,6 @@ describe('auth and groups', () => {
     const dup = await call('POST', '/api/groups', { code: CODE, body: { name: 'gruppe a' } });
     expect(dup.status).toBe(409);
     expect(dup.body.error).toBe('name_taken');
-    expect((await call('POST', '/api/groups', { code: CODE, body: { name: '  ' } })).status).toBe(400);
     expect((await call('POST', '/api/groups', { code: CODE, body: { name: 'x'.repeat(41) } })).status).toBe(400);
   });
 
@@ -60,7 +59,7 @@ describe('auth and groups', () => {
     const g = await newGroup('A');
     expect((await call('POST', '/api/locations/loc1/reserve')).status).toBe(401);
     expect((await call('POST', '/api/locations/loc1/reserve', { token: 'wrong' })).status).toBe(401);
-    expect((await call('GET', '/api/groups/me', { token: g.token })).body).toEqual({ id: g.id, name: 'A' });
+    expect((await call('GET', '/api/groups/me', { token: g.token })).body).toEqual({ id: g.id, name: 'A', namePending: false });
   });
 
   it('answers 404 for unknown location ids', async () => {
@@ -68,6 +67,87 @@ describe('auth and groups', () => {
     const r = await call('POST', '/api/locations/nope/reserve', { token: g.token });
     expect(r.status).toBe(404);
     expect(r.body.error).toBe('not_found');
+  });
+});
+
+describe('group naming', () => {
+  const create = (body: unknown = {}) => call('POST', '/api/groups', { code: CODE, body });
+  const me = (token: string) => call('GET', '/api/groups/me', { token });
+
+  it('gives a group without name the lowest free placeholder', async () => {
+    const a = await create();
+    const b = await create({ name: '  ' });
+    const c = await create({ name: null });
+    expect(a.status).toBe(201);
+    expect([a.body.name, b.body.name, c.body.name]).toEqual(['Gruppe 1', 'Gruppe 2', 'Gruppe 3']);
+    expect(a.body.namePending).toBe(true);
+    await orga('DELETE', `/groups/${b.body.id}`);
+    expect((await create()).body.name).toBe('Gruppe 2'); // gap is filled
+    await newGroup('gruppe 4');
+    expect((await create()).body.name).toBe('Gruppe 5');
+    expect((await create({ name: 5 })).status).toBe(400);
+    expect((await create({ name: 'x'.repeat(41) })).status).toBe(400);
+  });
+
+  it('marks a group with a given name as named', async () => {
+    const r = await create({ name: 'Mitte' });
+    expect(r.body).toMatchObject({ name: 'Mitte', namePending: false });
+    expect((await me(r.body.token)).body.namePending).toBe(false);
+  });
+
+  it('lets the group name itself exactly once', async () => {
+    const g = (await create()).body;
+    expect((await me(g.token)).body).toEqual({ id: g.id, name: 'Gruppe 1', namePending: true });
+    const ok = await call('PUT', '/api/groups/me/name', { token: g.token, body: { name: ' Die Putzer ' } });
+    expect(ok.status).toBe(200);
+    expect(ok.body).toEqual({ id: g.id, name: 'Die Putzer', namePending: false });
+    expect((await me(g.token)).body).toEqual({ id: g.id, name: 'Die Putzer', namePending: false });
+    expect((await call('GET', '/api/state')).body.groups).toEqual([{ id: g.id, name: 'Die Putzer', namePending: false }]);
+    const again = await call('PUT', '/api/groups/me/name', { token: g.token, body: { name: 'Andere' } });
+    expect(again.status).toBe(409);
+    expect(again.body).toEqual({ error: 'name_locked', name: 'Die Putzer' });
+    expect((await me(g.token)).body.name).toBe('Die Putzer');
+  });
+
+  it('validates the name and needs a token', async () => {
+    const g = (await create()).body;
+    expect((await call('PUT', '/api/groups/me/name', { body: { name: 'A' } })).status).toBe(401);
+    expect((await call('PUT', '/api/groups/me/name', { token: g.token, body: { name: ' ' } })).status).toBe(400);
+    expect((await call('PUT', '/api/groups/me/name', { token: g.token, body: {} })).status).toBe(400);
+    expect((await call('GET', '/api/groups/me/name', { token: g.token })).status).toBe(405);
+  });
+
+  it('rejects a taken name and keeps the group pending', async () => {
+    await newGroup('Mitte');
+    const g = (await create()).body;
+    const r = await call('PUT', '/api/groups/me/name', { token: g.token, body: { name: 'MITTE' } });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('name_taken');
+    expect((await me(g.token)).body.namePending).toBe(true);
+    expect((await call('PUT', '/api/groups/me/name', { token: g.token, body: { name: 'Frei' } })).status).toBe(200);
+  });
+
+  it('locks the name when the organizer renames', async () => {
+    const g = (await create()).body;
+    expect((await orga('GET', '/groups')).body.groups[0].namePending).toBe(true);
+    await orga('PATCH', `/groups/${g.id}`, { name: 'Von Orga' });
+    expect((await me(g.token)).body).toEqual({ id: g.id, name: 'Von Orga', namePending: false });
+    expect((await orga('GET', '/groups')).body.groups[0].namePending).toBe(false);
+    const r = await call('PUT', '/api/groups/me/name', { token: g.token, body: { name: 'Eigen' } });
+    expect(r.body).toEqual({ error: 'name_locked', name: 'Von Orga' });
+  });
+
+  it('does not let a deleted group name itself', async () => {
+    const g = (await create()).body;
+    await orga('DELETE', `/groups/${g.id}`);
+    const r = await call('PUT', '/api/groups/me/name', { token: g.token, body: { name: 'Spät' } });
+    expect(r.status).toBe(401);
+  });
+
+  it('shows namePending in the organizer list', async () => {
+    await create();
+    await newGroup('Fest');
+    expect((await orga('GET', '/groups')).body.groups.map((x: any) => x.namePending)).toEqual([true, false]);
   });
 });
 
@@ -152,7 +232,7 @@ describe('clean, reopen, notes, state', () => {
     expect(r.cache).toBe('no-store');
     expect(r.body).toEqual({
       now: t,
-      groups: [{ id: a.id, name: 'A' }],
+      groups: [{ id: a.id, name: 'A', namePending: false }],
       locations: {
         loc1: { status: 'on_the_way', groupId: a.id, groupName: 'A', updatedAt: t, expiresAt: t + RESERVATION_MS },
       },
@@ -185,8 +265,8 @@ describe('organizer', () => {
     const r = await orga('GET', '/groups');
     expect(r.status).toBe(200);
     expect(r.body.groups).toEqual([
-      { id: a.id, name: 'A', createdAt: t - 1000, cleanedCount: 1, reservation: null },
-      { id: b.id, name: 'B', createdAt: t, cleanedCount: 0, reservation: { locationId: 'loc2', expiresAt: t + RESERVATION_MS } },
+      { id: a.id, name: 'A', namePending: false, createdAt: t - 1000, cleanedCount: 1, reservation: null },
+      { id: b.id, name: 'B', namePending: false, createdAt: t, cleanedCount: 0, reservation: { locationId: 'loc2', expiresAt: t + RESERVATION_MS } },
     ]);
     t += RESERVATION_MS;
     expect((await orga('GET', '/groups')).body.groups[1].reservation).toBeNull();
@@ -198,7 +278,7 @@ describe('organizer', () => {
     const i2 = await orga('GET', `/groups/${g.id}/invite`);
     expect(i1.body).toEqual({ id: g.id, name: 'A', token: g.token });
     expect(i2.body.token).toBe(g.token);
-    expect((await call('GET', '/api/groups/me', { token: i1.body.token })).body).toEqual({ id: g.id, name: 'A' });
+    expect((await call('GET', '/api/groups/me', { token: i1.body.token })).body).toEqual({ id: g.id, name: 'A', namePending: false });
   });
 
   it('answers 404 for unknown groups', async () => {
@@ -267,7 +347,7 @@ describe('organizer', () => {
     expect(i.status).toBe(200);
     expect(i.body.token).not.toBe(legacy);
     expect((await call('GET', '/api/groups/me', { token: legacy })).status).toBe(401);
-    expect((await call('GET', '/api/groups/me', { token: i.body.token })).body).toEqual({ id: 'g_old', name: 'Alt' });
+    expect((await call('GET', '/api/groups/me', { token: i.body.token })).body).toEqual({ id: 'g_old', name: 'Alt', namePending: false });
   });
 });
 

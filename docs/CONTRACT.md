@@ -53,9 +53,10 @@ nothing.
 
 | Method and path | Auth | Body | Success |
 |---|---|---|---|
-| `GET /api/state` | none | | `{ now, groups: [{id, name}], locations: { [id]: LocationState } }`; `groups` has no deleted groups |
-| `POST /api/groups` | organizer code | `{ name }` (1–40 chars) | `201 { id, name, token }` |
-| `GET /api/groups/me` | group token | | `{ id, name }` |
+| `GET /api/state` | none | | `{ now, groups: [{id, name, namePending}], locations: { [id]: LocationState } }`; `groups` has no deleted groups |
+| `POST /api/groups` | organizer code | `{ name? }` (1–40 chars; missing or empty gives a placeholder, see "Group naming") | `201 { id, name, namePending, token }` |
+| `GET /api/groups/me` | group token | | `{ id, name, namePending }` |
+| `PUT /api/groups/me/name` | group token | `{ name }` (1–40 chars, trimmed) | `{ id, name, namePending: false }`; `409 name_taken`; `409 { error: "name_locked", name }` if the group is already named |
 | `POST /api/locations/:id/reserve` | group token | | `{ location: LocationState }`; releases the group's previous reservation; `409 { error: "taken", groupId, groupName }` if another group holds a live reservation, `409 { error: "cleaned" }` if already cleaned |
 | `POST /api/locations/:id/release` | group token | | `{ location }`; only the own reservation |
 | `POST /api/locations/:id/clean` | group token | | `{ location }`; allowed from any status |
@@ -93,10 +94,10 @@ unknown or deleted group id is `404 not_found`.
 
 | Method and path | Body | Success |
 |---|---|---|
-| `GET /api/orga/groups` | | `{ groups: [{ id, name, createdAt, cleanedCount, reservation: { locationId, expiresAt } \| null }] }`; not deleted, in creation order; `reservation` only while live. Also the code check when entering organizer mode |
+| `GET /api/orga/groups` | | `{ groups: [{ id, name, namePending, createdAt, cleanedCount, reservation: { locationId, expiresAt } \| null }] }`; not deleted, in creation order; `reservation` only while live. Also the code check when entering organizer mode |
 | `GET /api/orga/groups/:id/invite` | | `{ id, name, token }` |
 | `POST /api/orga/groups/:id/rotate` | | `{ id, name, token }`; the old token stops working |
-| `PATCH /api/orga/groups/:id` | `{ name }` (same rules as creation) | `{ id, name }`; `409 name_taken` |
+| `PATCH /api/orga/groups/:id` | `{ name }` (1–40 chars) | `{ id, name }`; `409 name_taken`; also sets `namePending` to false |
 | `DELETE /api/orga/groups/:id` | | `204` |
 
 Group tokens are derived: `token = base64url(HMAC-SHA256(INVITE_SECRET,
@@ -126,7 +127,8 @@ as `"<name> (gelöscht)"` in `groupName`.
 Error codes: `unauthorized` (401), `forbidden` (403), `not_found` (404,
 unknown location id or API path), `invalid` (400, or 405 for a wrong method),
 `taken`, `cleaned`, `name_taken` (409, group name already used, compared
-case-insensitively), `internal` (500).
+case-insensitively), `name_locked` (409, the group already has its final
+name; carries the current `name`), `internal` (500).
 
 Details:
 
@@ -136,6 +138,17 @@ Details:
   of a cleaned location is `403 forbidden`.
 - A note is trimmed; an all-whitespace note deletes it.
 - `GET /api/state` lists groups in creation order.
+
+## Group naming
+
+A group created without a name gets the placeholder `Gruppe N` (lowest `N >= 1`
+whose name is free, compared case-insensitively) and `namePending: true`. The
+group may replace it once with `PUT /api/groups/me/name`; the update is one
+conditional statement, so of two racing phones only one wins and the other gets
+`409 name_locked` with the winning name. After that, only the organizer can
+rename (`PATCH`). A rename by the organizer also ends the pending state, and a
+group created with a name, and every group from before this feature, has
+`namePending: false`. A deleted group's token is `401`, also for naming.
 
 ## Group invites
 

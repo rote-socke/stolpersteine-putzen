@@ -1,8 +1,8 @@
 // App controller: loads data, keeps state in sync and renders the sheet and dialogs.
 /* global qrcode */
 import {
-  ApiError, createGroup, deletePresence, getMe, getPresence, getState, locationAction, orgaDelete, orgaGroups, orgaInvite, orgaRename,
-  orgaRotate, putPresence, saveNote,
+  ApiError, createGroup, deletePresence, getMe, getPresence, getState, locationAction, nameGroup, orgaDelete, orgaGroups, orgaInvite,
+  orgaRename, orgaRotate, putPresence, saveNote,
 } from './api.js';
 import {
   clearGroup, clearOrganizerCode, inviteLink, loadDeviceId, loadGroup, loadOrganizerCode, loadShareLocation,
@@ -16,6 +16,7 @@ const POLL_MS = 15000;
 const NEXT_COUNT = 10;
 const NOTE_MAX = 500;
 const SHARE_MS = 20000;         // at most one position upload per phone in this time
+const SEARCH_TOAST = 'Standort wird gesucht …';
 const GROUP_GONE = 'Deine Gruppe ist nicht mehr gültig (gelöscht oder neuer Link erzeugt). Bitte den aktuellen QR-Code deiner Gruppe scannen.';
 
 // ---------- state ----------
@@ -24,7 +25,7 @@ let locations = [];             // from locations.json
 const byId = new Map();
 let server = { groups: [], locations: {} };
 let clockOffset = 0;            // server time minus device time
-let group = loadGroup();        // { groupId, groupName, token } or null
+let group = loadGroup();        // { groupId, groupName, namePending, token } or null
 let organizerCode = loadOrganizerCode(); // set while organizer mode is on
 let position = null;            // { lat, lon, accuracy }
 let watchId = null;
@@ -38,18 +39,27 @@ let people = [];                // other phones, from GET /api/presence
 
 const $ = (id) => document.getElementById(id);
 const sheet = $('sheet');
+const dialog = $('group-dialog');
 const serverNow = () => Date.now() + clockOffset;
 
 // ---------- toast ----------
 
 let toastTimer = null;
+let toastMessage = null;
 function toast(message, { error = false } = {}) {
   const el = $('toast');
+  toastMessage = message;
   el.textContent = message;
   el.classList.toggle('toast-error', error);
   el.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, error ? 6000 : 3500);
+}
+/** Hides the toast, but only while it still shows this message. */
+function hideToast(message) {
+  if (toastMessage !== message) return;
+  clearTimeout(toastTimer);
+  $('toast').hidden = true;
 }
 $('toast').addEventListener('click', () => { $('toast').hidden = true; });
 
@@ -200,7 +210,7 @@ function startLocating({ center }) {
       }
       if (!searchToastShown) {
         searchToastShown = true;
-        toast('Standort wird gesucht …');
+        toast(SEARCH_TOAST);
       }
     },
     { enableHighAccuracy: true, maximumAge: 10000 },
@@ -212,7 +222,7 @@ function startLocating({ center }) {
   }, 5000);
   if (!position && !searchToastShown) {
     searchToastShown = true;
-    toast('Standort wird gesucht …');
+    toast(SEARCH_TOAST);
   }
   updateLocateButton();
 }
@@ -223,6 +233,7 @@ function onPosition(p) {
   lastFixAt = Date.now();
   position = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy };
   searchToastShown = false;
+  hideToast(SEARCH_TOAST);
   stale = false;
   mapApi.setUserStale(false);
   mapApi.setUserPosition(position.lat, position.lon, position.accuracy);
@@ -329,11 +340,7 @@ async function refresh() {
     }
     if (group) {
       const g = server.groups.find((x) => x.id === group.groupId);
-      if (g && g.name !== group.groupName) {
-        group = { ...group, groupName: g.name };
-        saveGroup(group);
-        renderGroupButton();
-      }
+      if (g) adoptGroupInfo(g.name, g.namePending === true);
     }
   } catch {
     if (seq !== refreshSeq) return;
@@ -344,6 +351,7 @@ async function refresh() {
   }
   await presence;
   renderAll();
+  maybeAskName();
   // A group missing from the list was deleted (or its link replaced): let the token decide.
   if (group && !server.groups.some((x) => x.id === group.groupId)) await checkStoredGroup();
 }
@@ -682,6 +690,15 @@ function renderAll() {
 
 // ---------- group ----------
 
+/** Takes over a name or naming state that changed on the server. */
+function adoptGroupInfo(name, namePending) {
+  if (!group || (name === group.groupName && namePending === Boolean(group.namePending))) return;
+  group = { ...group, groupName: name, namePending };
+  saveGroup(group);
+  renderGroupButton();
+  if (dialog.open && dialogView === 'group') renderGroupDialog();
+}
+
 function renderGroupButton() {
   $('group-button-label').textContent = group ? group.groupName : 'Keiner Gruppe beigetreten';
   $('group-button').classList.toggle('has-group', Boolean(group));
@@ -743,9 +760,12 @@ function shareSwitch() {
 function renderGroupDialog() {
   const body = $('group-dialog-body');
   if (group) {
+    dialogView = 'group';
     $('group-dialog-title').textContent = group.groupName;
     body.replaceChildren(
       h('p', { class: 'muted' }, 'Du bist in dieser Gruppe.'),
+      group.namePending && h('div', { class: 'actions' },
+        h('button', { type: 'button', class: 'btn btn-primary', onclick: () => renderNaming() }, 'Gruppennamen festlegen')),
       inviteSection(group),
       shareSwitch(),
       h('div', { class: 'actions' },
@@ -766,6 +786,7 @@ function renderGroupDialog() {
       orgaEntry(),
     );
   } else {
+    dialogView = 'group';
     $('group-dialog-title').textContent = 'Keiner Gruppe beigetreten';
     body.replaceChildren(
       h('p', { class: 'hint' }, 'Zum Mitmachen den QR-Code deiner Gruppe scannen.'),
@@ -774,6 +795,65 @@ function renderGroupDialog() {
     );
   }
   renderAll();
+}
+
+// ---------- group naming ----------
+// A group named by the organizer with a placeholder may choose its own name, once.
+
+let dialogView = 'group';       // what the group dialog shows; sync only redraws it while it is 'group'
+let nameAsked = false;          // asked in this session; reset by a new join
+
+/** Asks for the name when this phone's group still has a placeholder and the dialog is free. */
+function maybeAskName() {
+  if (!group?.namePending || nameAsked || dialog.open) return;
+  renderNaming();
+  dialog.showModal();
+}
+
+function renderNaming() {
+  nameAsked = true;
+  dialogView = 'naming';
+  $('group-dialog-title').textContent = 'Wie soll eure Gruppe heißen?';
+  const input = h('input', { type: 'text', maxlength: '40', required: true, id: 'self-name', autocomplete: 'off', placeholder: 'z. B. Neckarputzer' });
+  const error = h('p', { class: 'form-error', role: 'alert', hidden: true }, 'Den Namen gibt es schon.');
+  const submit = async (e) => {
+    e.preventDefault();
+    const name = input.value.trim();
+    if (!name) return;
+    error.hidden = true;
+    await run(async () => {
+      try {
+        const res = await nameGroup(group.token, name);
+        group = { ...group, groupName: res.name, namePending: false };
+        saveGroup(group);
+        renderGroupButton();
+        renderGroupDialog();
+        toast(`Eure Gruppe heißt jetzt „${res.name}“.`);
+        refresh();
+      } catch (err) {
+        if (err instanceof ApiError && err.data.error === 'name_taken') {
+          error.hidden = false;
+          input.focus();
+        } else if (err instanceof ApiError && err.data.error === 'name_locked') {
+          group = { ...group, groupName: err.data.name, namePending: false };
+          saveGroup(group);
+          renderGroupButton();
+          renderGroupDialog();
+          toast(`Eure Gruppe heißt schon „${err.data.name}“.`);
+        } else {
+          throw err;
+        }
+      }
+    });
+  };
+  $('group-dialog-body').replaceChildren(
+    h('form', { class: 'form', onsubmit: submit },
+      h('label', { for: 'self-name' }, 'Gruppenname'), input, error,
+      h('p', { class: 'hint name-warning' }, 'Der Name kann danach nicht mehr geändert werden – nur noch von der Orga.'),
+      h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, 'Namen festlegen'),
+      h('button', { type: 'button', class: 'btn', onclick: () => dialog.close() }, 'Später')),
+  );
+  input.focus();
 }
 
 // ---------- organizer ----------
@@ -803,6 +883,7 @@ function orgaBack() {
 }
 
 function renderOrgaLogin() {
+  dialogView = 'orga';
   $('group-dialog-title').textContent = 'Organisation';
   const code = h('input', { type: 'password', autocomplete: 'off', required: true, id: 'org-code' });
   const submit = (e) => {
@@ -843,15 +924,15 @@ function progressLine(done, total, label) {
 }
 
 function renderOrga(groups) {
+  dialogView = 'orga';
   $('group-dialog-title').textContent = 'Organisation';
   const cleaned = (list) => list.filter((l) => stateOf(l.id).status === 'cleaned').length;
   const cannstatt = locations.filter((l) => l.district === 'cannstatt');
 
-  const nameInput = h('input', { type: 'text', maxlength: '40', required: true, id: 'group-name', placeholder: 'z. B. Gruppe A' });
+  const nameInput = h('input', { type: 'text', maxlength: '40', id: 'group-name', placeholder: 'z. B. Gruppe A' });
   const create = (e) => {
     e.preventDefault();
     const n = nameInput.value.trim();
-    if (!n) return;
     orgaTask(async () => {
       const g = await createGroup(organizerCode, n);
       toast(`Gruppe „${g.name}“ angelegt.`);
@@ -868,7 +949,8 @@ function renderOrga(groups) {
     h('details', { class: 'create' },
       h('summary', {}, 'Neue Gruppe anlegen'),
       h('form', { class: 'form', onsubmit: create },
-        h('label', { for: 'group-name' }, 'Name der Gruppe'), nameInput,
+        h('label', { for: 'group-name' }, 'Name der Gruppe (optional)'), nameInput,
+        h('p', { class: 'muted form-hint' }, 'Leer lassen: die Gruppe gibt sich beim Beitreten selbst einen Namen.'),
         h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, 'Gruppe anlegen'))),
     h('div', { class: 'actions' },
       orgaBack(),
@@ -900,12 +982,14 @@ function orgaGroupItem(g) {
       })),
       btn('Beitreten', () => orgaTask(async () => {
         const inv = await orgaInvite(organizerCode, g.id);
-        group = { groupId: inv.id, groupName: inv.name, token: inv.token };
+        group = { groupId: inv.id, groupName: inv.name, namePending: g.namePending === true, token: inv.token };
         saveGroup(group);
         renderGroupButton();
         toast(`Du bist jetzt in der Gruppe „${inv.name}“.`);
         refresh();
-        await reloadOrga();
+        nameAsked = false;
+        if (group.namePending) renderNaming();
+        else await reloadOrga();
       })),
       btn('Umbenennen', () => {
         const name = prompt('Neuer Name der Gruppe', g.name)?.trim();
@@ -913,7 +997,7 @@ function orgaGroupItem(g) {
         return orgaTask(async () => {
           const res = await orgaRename(organizerCode, g.id, name);
           if (group?.groupId === g.id) {
-            group = { ...group, groupName: res.name };
+            group = { ...group, groupName: res.name, namePending: false };
             saveGroup(group);
             renderGroupButton();
           }
@@ -960,6 +1044,7 @@ async function reloadOrga() {
 }
 
 function showInvite(target) {
+  dialogView = 'orga';
   $('group-dialog-title').textContent = target.groupName;
   $('group-dialog-body').replaceChildren(
     inviteSection(target),
@@ -967,7 +1052,6 @@ function showInvite(target) {
   );
 }
 
-const dialog = $('group-dialog');
 $('group-button').addEventListener('click', () => {
   renderGroupDialog();
   dialog.showModal();
@@ -982,11 +1066,13 @@ async function handleJoin() {
   try {
     const me = await getMe(join.token);
     if (me.id !== join.groupId) throw new ApiError(401, { error: 'unauthorized' });
-    group = { groupId: me.id, groupName: me.name, token: join.token };
+    group = { groupId: me.id, groupName: me.name, namePending: me.namePending === true, token: join.token };
     saveGroup(group);
     removeFragment();
     renderGroupButton();
     toast(`Du bist jetzt in der Gruppe „${me.name}“.`);
+    nameAsked = false;
+    maybeAskName();
   } catch (err) {
     if (err instanceof ApiError && err.status === 0) {
       // Keep the fragment so a reload can try again.
@@ -1002,11 +1088,8 @@ async function checkStoredGroup() {
   if (!group || readJoinFragment(location.hash)) return;
   try {
     const me = await getMe(group.token);
-    if (me.name !== group.groupName) {
-      group = { ...group, groupName: me.name };
-      saveGroup(group);
-      renderGroupButton();
-    }
+    adoptGroupInfo(me.name, me.namePending === true);
+    maybeAskName();
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
       dropGroup(GROUP_GONE);

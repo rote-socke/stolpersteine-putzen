@@ -488,6 +488,10 @@ a { color: var(--accent); }
   background: var(--bg);
 }
 .form .btn { margin-top: 10px; }
+.form-hint { margin: 0; font-size: 0.85rem; }
+.form-error { margin: 0; color: var(--error-bg); font-weight: 600; }
+.form-error[hidden] { display: none; }
+.name-warning { margin: 10px 0 0; }
 
 /* organizer */
 
