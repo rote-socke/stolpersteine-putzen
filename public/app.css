@@ -33,6 +33,10 @@
   --mk-way-edge: #06183a;
   --mk-cleaned-fill: #e3b92d;
   --mk-cleaned-edge: #4a3300;
+  --mk-mate: #1f9d55;
+  --mk-mate-edge: #0b2a1a;
+  --mk-peer: #8a4fd0;
+  --mk-peer-edge: #26103a;
   --sheet-max: 45vh;
   color-scheme: light;
 }
@@ -179,6 +183,8 @@ a { color: var(--accent); }
 .lg-other { fill: #ffffff; stroke: var(--mk-way); stroke-width: 3.5; }
 .lg-cleaned { fill: var(--mk-cleaned-fill); stroke: var(--mk-cleaned-edge); stroke-width: 1.5; }
 .lg-note { fill: #15171a; stroke: #ffffff; stroke-width: 1.5; }
+.lg-mate { fill: var(--mk-mate); stroke: var(--mk-mate-edge); stroke-width: 2.5; }
+.lg-peer { fill: var(--mk-peer); stroke: var(--mk-peer-edge); stroke-width: 2.5; }
 .lg-me { fill: #cc79a7; stroke: #6b6b6b; stroke-width: 2; }
 
 .locate-button {
@@ -504,3 +510,21 @@ a { color: var(--accent); }
 .orga-group-way { margin: 2px 0 0; font-size: 0.9rem; }
 .orga-group .actions { margin: 8px 0 0; }
 .orga-group .actions > .btn { flex: 1 1 40%; }
+
+/* Other phones on the map: small group-name label (tiles stay light in dark mode). */
+.leaflet-tooltip.person-label {
+  padding: 1px 6px;
+  border: 1px solid rgb(0 0 0 / 0.35);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.92);
+  color: #15171a;
+  font-size: 0.75rem;
+  font-weight: 600;
+  box-shadow: none;
+}
+.leaflet-tooltip-top.person-label::before { border-top-color: rgb(255 255 255 / 0.92); }
+
+/* Sharing switch in the group dialog. */
+.share-row { display: flex; align-items: center; gap: 12px; min-height: 44px; margin: 14px 0 4px; font-weight: 600; cursor: pointer; }
+.share-row input { width: 22px; height: 22px; flex: none; accent-color: var(--accent); }
+.share-note { margin: 0 0 12px; font-size: 0.85rem; }

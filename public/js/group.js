@@ -28,6 +28,46 @@ export function clearGroup() {
   }
 }
 
+// Opt-in sharing of this phone's position with the other groups' members. Default off.
+const SHARE_KEY = 'stolpersteine-putzen.share-location';
+
+export function loadShareLocation() {
+  try {
+    return localStorage.getItem(SHARE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function saveShareLocation(on) {
+  try {
+    if (on) localStorage.setItem(SHARE_KEY, '1');
+    else localStorage.removeItem(SHARE_KEY);
+  } catch {
+    /* private mode: the choice lasts only for this page view */
+  }
+}
+
+// A random id per phone, so the map shows one dot per phone. Not tied to a person.
+const DEVICE_KEY = 'stolpersteine-putzen.device-id';
+
+export function loadDeviceId() {
+  try {
+    const id = localStorage.getItem(DEVICE_KEY);
+    if (id && /^[A-Za-z0-9_-]{8,64}$/.test(id)) return id;
+  } catch {
+    /* storage blocked: a new id per page view */
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  const id = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  try {
+    localStorage.setItem(DEVICE_KEY, id);
+  } catch {
+    /* see above */
+  }
+  return id;
+}
+
 // The organizer code, kept on this phone while organizer mode is on.
 const CODE_KEY = 'stolpersteine-putzen.organizer';
 

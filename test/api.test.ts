@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createApi, RESERVATION_MS, type Env } from '../src/api.ts';
+import { createApi, PRESENCE_MS, RESERVATION_MS, type Env } from '../src/api.ts';
 import { createTestDb } from './d1-sqlite.ts';
 
 const CODE = 'organizer-secret';
@@ -25,7 +25,7 @@ async function call(method: string, path: string, opts: { token?: string; code?:
     }),
     env,
   );
-  return { status: res.status, cache: res.headers.get('cache-control'), body: (await res.json()) as any };
+  return { status: res.status, cache: res.headers.get('cache-control'), body: (res.status === 204 ? null : await res.json()) as any };
 }
 
 async function orga(method: string, path: string, body?: unknown) {
@@ -268,5 +268,97 @@ describe('organizer', () => {
     expect(i.body.token).not.toBe(legacy);
     expect((await call('GET', '/api/groups/me', { token: legacy })).status).toBe(401);
     expect((await call('GET', '/api/groups/me', { token: i.body.token })).body).toEqual({ id: 'g_old', name: 'Alt' });
+  });
+});
+
+describe('presence', () => {
+  const pos = { deviceId: 'device-aaaa1111', lat: 48.8, lon: 9.2, accuracy: 12 };
+
+  it('requires auth to read and write', async () => {
+    expect((await call('GET', '/api/presence')).status).toBe(401);
+    expect((await call('GET', '/api/presence', { token: 'wrong' })).status).toBe(401);
+    expect((await call('GET', '/api/presence', { code: 'nope' })).status).toBe(401);
+    expect((await call('PUT', '/api/presence', { body: pos })).status).toBe(401);
+    expect((await call('DELETE', '/api/presence/device-aaaa1111')).status).toBe(401);
+  });
+
+  it('stores the latest position and reads it back with token or organizer code', async () => {
+    const a = await newGroup('A');
+    const b = await newGroup('B');
+    expect((await call('PUT', '/api/presence', { token: a.token, body: pos })).status).toBe(204);
+    await call('PUT', '/api/presence', { token: a.token, body: { ...pos, lat: 48.9 } });
+    const r = await call('GET', '/api/presence', { token: b.token });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({
+      now: t,
+      people: [{ deviceId: pos.deviceId, groupId: a.id, groupName: 'A', lat: 48.9, lon: 9.2, accuracy: 12, updatedAt: t }],
+    });
+    expect((await call('GET', '/api/presence', { code: CODE })).body.people).toHaveLength(1);
+  });
+
+  it('moves a device to the group that sends it', async () => {
+    const a = await newGroup('A');
+    const b = await newGroup('B');
+    await call('PUT', '/api/presence', { token: a.token, body: pos });
+    await call('PUT', '/api/presence', { token: b.token, body: pos });
+    const people = (await call('GET', '/api/presence', { code: CODE })).body.people;
+    expect(people.map((p: any) => p.groupId)).toEqual([b.id]);
+  });
+
+  it('ignores positions older than 10 minutes and deletes them on the next write', async () => {
+    const a = await newGroup('A');
+    await call('PUT', '/api/presence', { token: a.token, body: pos });
+    t += PRESENCE_MS - 1;
+    expect((await call('GET', '/api/presence', { token: a.token })).body.people).toHaveLength(1);
+    t += 1;
+    expect((await call('GET', '/api/presence', { token: a.token })).body.people).toEqual([]);
+    const row = () => env.DB.prepare('SELECT COUNT(*) AS n FROM presence').first<{ n: number }>();
+    expect((await row())?.n).toBe(1);
+    await call('PUT', '/api/presence', { token: a.token, body: { ...pos, deviceId: 'device-bbbb2222' } });
+    expect((await row())?.n).toBe(1);
+  });
+
+  it('deletes only the own group row', async () => {
+    const a = await newGroup('A');
+    const b = await newGroup('B');
+    await call('PUT', '/api/presence', { token: a.token, body: pos });
+    expect((await call('DELETE', `/api/presence/${pos.deviceId}`, { token: b.token })).status).toBe(204);
+    expect((await call('GET', '/api/presence', { code: CODE })).body.people).toHaveLength(1);
+    expect((await call('DELETE', `/api/presence/${pos.deviceId}`, { token: a.token })).status).toBe(204);
+    expect((await call('GET', '/api/presence', { code: CODE })).body.people).toEqual([]);
+  });
+
+  it('drops presence when the group is deleted or its link rotated', async () => {
+    const a = await newGroup('A');
+    const b = await newGroup('B');
+    await call('PUT', '/api/presence', { token: a.token, body: pos });
+    await call('PUT', '/api/presence', { token: b.token, body: { ...pos, deviceId: 'device-bbbb2222' } });
+    await orga('POST', `/groups/${b.id}/rotate`);
+    expect((await call('GET', '/api/presence', { code: CODE })).body.people.map((p: any) => p.groupId)).toEqual([a.id]);
+    await handle(
+      new Request(`https://x.test/api/orga/groups/${a.id}`, { method: 'DELETE', headers: { 'x-organizer-code': CODE } }),
+      env,
+    );
+    expect((await call('GET', '/api/presence', { code: CODE })).body.people).toEqual([]);
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM presence').first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it('rejects an invalid body and caps absurd accuracy', async () => {
+    const a = await newGroup('A');
+    const bad = [
+      { ...pos, deviceId: 'short' },
+      { ...pos, deviceId: 'has spaces here' },
+      { ...pos, deviceId: 'x'.repeat(65) },
+      { ...pos, lat: 91 },
+      { ...pos, lon: -181 },
+      { ...pos, lat: '48' },
+      { ...pos, lat: null },
+      { ...pos, accuracy: -1 },
+      { ...pos, accuracy: 'x' },
+      { deviceId: pos.deviceId },
+    ];
+    for (const body of bad) expect((await call('PUT', '/api/presence', { token: a.token, body })).status).toBe(400);
+    await call('PUT', '/api/presence', { token: a.token, body: { ...pos, accuracy: 1e9 } });
+    expect((await call('GET', '/api/presence', { token: a.token })).body.people[0].accuracy).toBe(10000);
   });
 });

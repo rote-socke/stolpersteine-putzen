@@ -15,6 +15,9 @@ export interface ApiOptions {
 export const RESERVATION_MS = 45 * 60 * 1000;
 const NOTE_MAX = 500;
 const NAME_MAX = 40;
+export const PRESENCE_MS = 10 * 60 * 1000;
+const ACCURACY_CAP = 10000;
+const DEVICE_ID = /^[A-Za-z0-9_-]{8,64}$/;
 
 interface Group {
   id: string;
@@ -287,9 +290,14 @@ export function createApi(opts: ApiOptions) {
     const g = await findGroup(env, id);
     const version = g.token_version + 1;
     const token = await deriveToken(env, g.id, version);
-    await env.DB.prepare('UPDATE groups SET token_version = ?, token_hash = ? WHERE id = ?')
-      .bind(version, await sha256(token), g.id)
-      .run();
+    await env.DB.batch([
+      env.DB.prepare('UPDATE groups SET token_version = ?, token_hash = ? WHERE id = ?').bind(
+        version,
+        await sha256(token),
+        g.id,
+      ),
+      env.DB.prepare('DELETE FROM presence WHERE group_id = ?').bind(g.id),
+    ]);
     return json({ id: g.id, name: g.name, token });
   }
 
@@ -311,6 +319,7 @@ export function createApi(opts: ApiOptions) {
     const g = await findGroup(env, id);
     await env.DB.batch([
       env.DB.prepare("DELETE FROM location_state WHERE group_id = ? AND status = 'on_the_way'").bind(g.id),
+      env.DB.prepare('DELETE FROM presence WHERE group_id = ?').bind(g.id),
       env.DB.prepare(
         "UPDATE groups SET deleted_at = ?, name_key = 'deleted:' || id, token_hash = 'deleted:' || id WHERE id = ?",
       ).bind(now(), g.id),
@@ -402,6 +411,63 @@ export function createApi(opts: ApiOptions) {
     return locationState(env, id);
   }
 
+  // ---------- presence ----------
+  // Latest position per device, opt-in. Never logged, never public, gone after PRESENCE_MS.
+
+  const num = (v: unknown, min: number, max: number) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max ? v : null;
+
+  async function putPresence(request: Request, env: Env, group: Group): Promise<Response> {
+    const body = await readJson(request);
+    const lat = num(body.lat, -90, 90);
+    const lon = num(body.lon, -180, 180);
+    const accuracy = num(body.accuracy, 0, Number.MAX_VALUE);
+    if (typeof body.deviceId !== 'string' || !DEVICE_ID.test(body.deviceId) || lat === null || lon === null || accuracy === null) {
+      throw fail(400, 'invalid');
+    }
+    const t = now();
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM presence WHERE updated_at <= ?').bind(t - PRESENCE_MS),
+      env.DB.prepare(
+        `INSERT INTO presence (device_id, group_id, lat, lon, accuracy, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(device_id) DO UPDATE SET
+           group_id = excluded.group_id, lat = excluded.lat, lon = excluded.lon,
+           accuracy = excluded.accuracy, updated_at = excluded.updated_at`,
+      ).bind(body.deviceId, group.id, lat, lon, Math.min(accuracy, ACCURACY_CAP), t),
+    ]);
+    return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+  }
+
+  async function deletePresence(env: Env, group: Group, deviceId: string): Promise<Response> {
+    await env.DB.prepare('DELETE FROM presence WHERE device_id = ? AND group_id = ?').bind(deviceId, group.id).run();
+    return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
+  }
+
+  async function getPresence(request: Request, env: Env): Promise<Response> {
+    if (request.headers.has('x-organizer-code')) await requireOrganizer(request, env);
+    else await authenticate(request, env);
+    const t = now();
+    const { results } = await env.DB.prepare(
+      `SELECT p.device_id, p.group_id, g.name, p.lat, p.lon, p.accuracy, p.updated_at
+       FROM presence p JOIN groups g ON g.id = p.group_id
+       WHERE p.updated_at > ? AND g.deleted_at IS NULL ORDER BY p.updated_at DESC`,
+    )
+      .bind(t - PRESENCE_MS)
+      .all<{ device_id: string; group_id: string; name: string; lat: number; lon: number; accuracy: number; updated_at: number }>();
+    return json({
+      now: t,
+      people: results.map((r) => ({
+        deviceId: r.device_id,
+        groupId: r.group_id,
+        groupName: r.name,
+        lat: r.lat,
+        lon: r.lon,
+        accuracy: r.accuracy,
+        updatedAt: r.updated_at,
+      })),
+    });
+  }
+
   async function route(request: Request, env: Env, path: string): Promise<Response> {
     const method = request.method;
     if (path === '/api/state' && method === 'GET') return getState(env);
@@ -409,6 +475,16 @@ export function createApi(opts: ApiOptions) {
     if (path === '/api/groups/me' && method === 'GET') {
       const g = await authenticate(request, env);
       return json({ id: g.id, name: g.name });
+    }
+    if (path === '/api/presence') {
+      if (method === 'GET') return getPresence(request, env);
+      if (method === 'PUT') return putPresence(request, env, await authenticate(request, env));
+      throw fail(405, 'invalid');
+    }
+    const pr = /^\/api\/presence\/([^/]+)$/.exec(path);
+    if (pr) {
+      if (method !== 'DELETE') throw fail(405, 'invalid');
+      return deletePresence(env, await authenticate(request, env), decodeURIComponent(pr[1]));
     }
     if (path.startsWith('/api/orga/')) {
       await requireOrganizer(request, env);

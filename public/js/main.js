@@ -1,12 +1,12 @@
 // App controller: loads data, keeps state in sync and renders the sheet and dialogs.
 /* global qrcode */
 import {
-  ApiError, createGroup, getMe, getState, locationAction, orgaDelete, orgaGroups, orgaInvite, orgaRename,
-  orgaRotate, saveNote,
+  ApiError, createGroup, deletePresence, getMe, getPresence, getState, locationAction, orgaDelete, orgaGroups, orgaInvite, orgaRename,
+  orgaRotate, putPresence, saveNote,
 } from './api.js';
 import {
-  clearGroup, clearOrganizerCode, inviteLink, loadGroup, loadOrganizerCode, readJoinFragment, removeFragment,
-  saveGroup, saveOrganizerCode,
+  clearGroup, clearOrganizerCode, inviteLink, loadDeviceId, loadGroup, loadOrganizerCode, loadShareLocation,
+  readJoinFragment, removeFragment, saveGroup, saveOrganizerCode, saveShareLocation,
 } from './group.js';
 import { createMap } from './map.js';
 import { distanceMeters, formatDayTime, formatDistance, h, navigationUrl } from './dom.js';
@@ -14,6 +14,7 @@ import { distanceMeters, formatDayTime, formatDistance, h, navigationUrl } from 
 const POLL_MS = 15000;
 const NEXT_COUNT = 10;
 const NOTE_MAX = 500;
+const SHARE_MS = 20000;         // at most one position upload per phone in this time
 const GROUP_GONE = 'Deine Gruppe ist nicht mehr gültig (gelöscht oder neuer Link erzeugt). Bitte den aktuellen QR-Code deiner Gruppe scannen.';
 
 // ---------- state ----------
@@ -30,6 +31,9 @@ let busy = false;
 let view = { mode: 'home' };    // or { mode: 'detail', id }
 let collapsed = false;
 let connectionLost = false;
+const deviceId = loadDeviceId();
+let shareLocation = loadShareLocation(); // opt-in, default off
+let people = [];                // other phones, from GET /api/presence
 
 const $ = (id) => document.getElementById(id);
 const sheet = $('sheet');
@@ -95,6 +99,7 @@ const mapApi = createMap($('map'), { onSelect: (id) => openDetail(id) });
 function renderMap() {
   mapApi.select(view.mode === 'detail' ? view.id : null);
   mapApi.update(kindOf, hasNote);
+  renderPeople();
 }
 
 let moveTimer = null;
@@ -131,6 +136,7 @@ function setStale(value) {
   stale = value;
   mapApi.setUserStale(value);
   updateLocateButton();
+  syncSharing();
   if (view.mode === 'home') renderSheet();
 }
 
@@ -220,6 +226,7 @@ function onPosition(p) {
   mapApi.setUserStale(false);
   mapApi.setUserPosition(position.lat, position.lon, position.accuracy);
   updateLocateButton();
+  syncSharing();
   if (centerOnNextFix) {
     centerOnNextFix = false;
     mapApi.map.setView([position.lat, position.lon], Math.max(mapApi.map.getZoom(), 17));
@@ -246,6 +253,56 @@ if (navigator.permissions?.query) {
   }).catch(() => {});
 }
 
+// ---------- sharing positions ----------
+// Opt-in: while on, the phone is in a group and its position is fresh, the latest
+// position goes to the server. It stops (and the server row is deleted) otherwise.
+
+let sharing = false;            // the server may hold a row for this phone
+let sharedToken = null;         // token that wrote it, kept so a delete still works after leaving
+let lastSentAt = 0;
+
+function syncSharing() {
+  const want = shareLocation && group && position && !stale;
+  if (want) {
+    if (!sharing || Date.now() - lastSentAt >= SHARE_MS) sendPosition();
+  } else if (sharing) {
+    sharing = false;
+    deletePresence(sharedToken, deviceId).catch(() => {}); // best effort; the server expires it anyway
+  }
+}
+
+function sendPosition() {
+  sharing = true;
+  sharedToken = group.token;
+  lastSentAt = Date.now();
+  putPresence(group.token, { deviceId, lat: position.lat, lon: position.lon, accuracy: position.accuracy })
+    .catch((err) => {
+      if (err instanceof ApiError && err.status === 401) {
+        sharing = false;
+        dropGroup(GROUP_GONE);
+        renderAll();
+      }
+    });
+}
+setInterval(syncSharing, 5000);
+
+window.addEventListener('pagehide', () => {
+  if (!sharing) return;
+  sharing = false;
+  try {
+    fetch(`/api/presence/${encodeURIComponent(deviceId)}`, {
+      method: 'DELETE', headers: { authorization: `Bearer ${sharedToken}` }, keepalive: true,
+    }).catch(() => {});
+  } catch {
+    /* best effort */
+  }
+});
+
+function renderPeople() {
+  const visible = group || organizerCode ? people.filter((p) => p.deviceId !== deviceId) : [];
+  mapApi.setPeople(visible, group?.groupId ?? null, serverNow());
+}
+
 // ---------- legend ----------
 
 $('legend-toggle').addEventListener('click', () => {
@@ -259,6 +316,7 @@ $('legend-toggle').addEventListener('click', () => {
 let refreshSeq = 0;
 async function refresh() {
   const seq = ++refreshSeq;
+  const presence = loadPeople();
   try {
     const data = await getState();
     if (seq !== refreshSeq) return;
@@ -283,9 +341,27 @@ async function refresh() {
       toast('Keine Verbindung. Du siehst den letzten bekannten Stand.', { error: true });
     }
   }
+  await presence;
   renderAll();
   // A group missing from the list was deleted (or its link replaced): let the token decide.
   if (group && !server.groups.some((x) => x.id === group.groupId)) await checkStoredGroup();
+}
+
+/** Other phones: only for members and the organizer; anyone else makes no request. */
+async function loadPeople() {
+  if (!group && !organizerCode) {
+    people = [];
+    return;
+  }
+  const token = group?.token;
+  try {
+    const data = await getPresence(token ? { token } : { organizerCode });
+    people = Array.isArray(data.people) ? data.people : [];
+  } catch (err) {
+    // 401 with a group token: the regular check below decides if the group is gone.
+    if (!(err instanceof ApiError && err.status === 401 && token)) return;
+    people = [];
+  }
 }
 
 setInterval(() => {
@@ -306,6 +382,7 @@ function applyLocation(id, loc) {
 function dropGroup(message) {
   group = null;
   clearGroup();
+  syncSharing();
   renderGroupButton();
   toast(message, { error: true });
 }
@@ -617,6 +694,23 @@ function inviteSection(target) {
   );
 }
 
+function shareSwitch() {
+  const input = h('input', {
+    type: 'checkbox', role: 'switch', checked: shareLocation,
+    onchange: (e) => {
+      shareLocation = e.target.checked;
+      saveShareLocation(shareLocation);
+      if (shareLocation && watchId === null) startLocating({ center: false });
+      syncSharing();
+    },
+  });
+  return h('div', {},
+    h('label', { class: 'share-row' }, input, 'Meinen Standort teilen'),
+    h('p', { class: 'muted share-note' },
+      'Deine Position ist nur für Mitglieder von Gruppen und die Orga sichtbar, solange die App geöffnet ist. '
+      + 'Es wird nur die letzte Position gespeichert, höchstens 10 Minuten lang, ohne Verlauf.'));
+}
+
 function renderGroupDialog() {
   const body = $('group-dialog-body');
   if (group) {
@@ -624,6 +718,7 @@ function renderGroupDialog() {
     body.replaceChildren(
       h('p', { class: 'muted' }, 'Du bist in dieser Gruppe.'),
       inviteSection(group),
+      shareSwitch(),
       h('div', { class: 'actions' },
         h('button', {
           type: 'button', class: 'btn btn-danger',
@@ -631,6 +726,8 @@ function renderGroupDialog() {
             if (!confirm(`Gruppe „${group.groupName}“ auf diesem Handy verlassen? Du kannst nur über den QR-Code bzw. Einladungslink wieder beitreten.`)) return;
             group = null;
             clearGroup();
+            syncSharing();
+            people = [];
             renderGroupButton();
             renderGroupDialog();
             renderAll();

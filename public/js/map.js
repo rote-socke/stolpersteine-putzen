@@ -17,6 +17,15 @@ const STYLES = {
 const EDGE = { color: '#1c1812', fillColor: '#1c1812', fillOpacity: 1, weight: 0, interactive: false };
 const EDGE_GROW = 3; // ring outer edge is radius + weight/2 = +2
 
+// Other phones (opt-in). Own group = green, other groups = purple, both with a dark edge;
+// distinct from the stone colours (grey/brass/blue) and the pink own dot. Mirrors --mk-mate/--mk-peer.
+const PEOPLE = {
+  mate: { color: '#0b2a1a', fillColor: '#1f9d55' },
+  peer: { color: '#26103a', fillColor: '#8a4fd0' },
+};
+const PERSON_FRESH_MS = 2 * 60 * 1000;
+const LABEL_ZOOM = 16;
+
 export function createMap(el, { onSelect }) {
   const renderer = L.canvas({ padding: 0.3, tolerance: 10 });
   const map = L.map(el, { renderer, zoomControl: true, attributionControl: true });
@@ -78,6 +87,56 @@ export function createMap(el, { onSelect }) {
       }
     }
     updateSelection();
+    raise();
+  }
+
+  // Order from the bottom: stones, other phones, own dot.
+  function raise() {
+    for (const p of people.values()) p.marker.bringToFront();
+    if (userHalo && map.hasLayer(userHalo)) userHalo.bringToFront();
+    if (userDot && map.hasLayer(userDot)) userDot.bringToFront();
+  }
+
+  const people = new Map(); // deviceId -> { marker, name }
+
+  function labelPerson(p) {
+    p.marker.unbindTooltip();
+    p.marker.bindTooltip(p.name, {
+      permanent: map.getZoom() >= LABEL_ZOOM, direction: 'top', offset: [0, -7], className: 'person-label',
+    });
+  }
+  map.on('zoomend', () => { for (const p of people.values()) labelPerson(p); });
+
+  /** list: [{deviceId, groupId, groupName, lat, lon, updatedAt}]; now: server time in ms. */
+  function setPeople(list, ownGroupId, now) {
+    const seen = new Set();
+    for (const person of list) {
+      seen.add(person.deviceId);
+      const base = person.groupId === ownGroupId ? PEOPLE.mate : PEOPLE.peer;
+      const faded = now - person.updatedAt > PERSON_FRESH_MS;
+      const style = { ...base, weight: 2.5, opacity: faded ? 0.45 : 1, fillOpacity: faded ? 0.4 : 1 };
+      let p = people.get(person.deviceId);
+      if (!p) {
+        // Not interactive: members stand at the stones, and taps must reach the stone below.
+        const marker = L.circleMarker([person.lat, person.lon], { radius: 7, renderer, interactive: false, ...style })
+          .addTo(map);
+        p = { marker, name: null };
+        people.set(person.deviceId, p);
+      } else {
+        p.marker.setLatLng([person.lat, person.lon]).setStyle(style);
+      }
+      if (p.name !== person.groupName) {
+        p.name = person.groupName;
+        labelPerson(p);
+      }
+    }
+    for (const [id, p] of people) {
+      if (!seen.has(id)) {
+        p.marker.remove();
+        people.delete(id);
+      }
+    }
+    raise();
   }
 
   function updateSelection() {
@@ -125,7 +184,7 @@ export function createMap(el, { onSelect }) {
     }
     if (!userStale && !map.hasLayer(userHalo)) userHalo.addTo(map);
     if (!map.hasLayer(userDot)) userDot.addTo(map);
-    userDot.bringToFront();
+    raise();
   }
 
   function setUserStale(value) {
@@ -155,5 +214,5 @@ export function createMap(el, { onSelect }) {
     map.fitBounds(bounds, { padding: [16, 16] });
   }
 
-  return { map, setLocations, update, select, reveal, setUserPosition, setUserStale, fitTo };
+  return { map, setLocations, setPeople, update, select, reveal, setUserPosition, setUserStale, fitTo };
 }

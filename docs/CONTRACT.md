@@ -62,6 +62,30 @@ nothing.
 | `POST /api/locations/:id/reopen` | group token | | `{ location }`; undoes `cleaned` |
 | `PUT /api/locations/:id/note` | group token | `{ text }` (max 500 chars, empty clears) | `{ location }` |
 
+### Presence (opt-in phone positions)
+
+A phone that switched on "Meinen Standort teilen" sends its latest position so
+groups can see each other. Positions are never public: reading needs a group
+token (`Authorization: Bearer`) or `X-Organizer-Code`; neither is `401`.
+`deviceId` is a random id per phone (16 random bytes, base64url, kept in
+`localStorage`), so the map shows one dot per phone.
+
+| Method and path | Auth | Body | Success |
+|---|---|---|---|
+| `PUT /api/presence` | group token | `{ deviceId, lat, lon, accuracy }` | `204` |
+| `DELETE /api/presence/:deviceId` | group token | | `204` |
+| `GET /api/presence` | group token or organizer code | | `{ now, people: [{ deviceId, groupId, groupName, lat, lon, accuracy, updatedAt }] }` |
+
+- `PUT` validates: `deviceId` 8–64 chars of `[A-Za-z0-9_-]`, `lat` in
+  -90..90, `lon` in -180..180, `accuracy` a finite number >= 0 (stored capped at
+  10000 m); otherwise `400 invalid`. It is an upsert; a device row of another
+  group moves to the caller's group (phone switched group).
+- `DELETE` only removes a row of the caller's group; otherwise a no-op, still `204`.
+- Only the latest position per device is kept, no history, and positions are not
+  logged. `GET` lists only rows from the last 10 minutes and of non-deleted
+  groups; every `PUT` also deletes rows older than 10 minutes.
+- Deleting a group and "Neuen Link" (`rotate`) delete the group's presence rows.
+
 ### Organizer endpoints
 
 All need `X-Organizer-Code`; a wrong or missing code is `401 unauthorized`. An

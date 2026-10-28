@@ -57,3 +57,8 @@ export const orgaDelete = (organizerCode, id) => api('DELETE', orgaPath(id), { o
 const locPath = (id, action) => `/api/locations/${encodeURIComponent(id)}/${action}`;
 export const locationAction = (token, id, action) => api('POST', locPath(id, action), { token });
 export const saveNote = (token, id, text) => api('PUT', locPath(id, 'note'), { token, body: { text } });
+
+export const getPresence = ({ token, organizerCode }) => api('GET', '/api/presence', { token, organizerCode });
+export const putPresence = (token, body) => api('PUT', '/api/presence', { token, body });
+export const deletePresence = (token, deviceId) =>
+  api('DELETE', `/api/presence/${encodeURIComponent(deviceId)}`, { token });
