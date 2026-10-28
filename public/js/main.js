@@ -753,7 +753,10 @@ function shareSwitch() {
 
 let installEvent = null;        // Chromium's beforeinstallprompt, kept until used
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-const isIosSafari = () => /iPad|iPhone|iPod/.test(navigator.userAgent) && !/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
+// iPadOS reports itself as a Mac, so a touch-capable "Mac" counts as iOS too.
+const isIos = () => /iPad|iPhone|iPod/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isIosSafari = () => isIos() && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(navigator.userAgent);
 
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
@@ -780,8 +783,23 @@ function installSection() {
         },
       }, t('install.button')));
   }
-  if (isIosSafari()) return h('p', { class: 'muted' }, t('install.ios'));
-  return document.createDocumentFragment();
+  // No install prompt (iOS, Firefox …): a button that reveals the browser's own steps.
+  const steps = isIosSafari() ? 'install.stepsIosSafari'
+    : isIos() ? 'install.stepsIosOther'
+    : navigator.maxTouchPoints > 0 ? 'install.stepsOther'
+    : null;
+  if (!steps) return null;
+  const hint = h('p', { class: 'hint', hidden: true }, t(steps));
+  return h('div', {},
+    h('div', { class: 'actions' },
+      h('button', {
+        type: 'button', class: 'btn', 'aria-expanded': 'false',
+        onclick: (e) => {
+          hint.hidden = !hint.hidden;
+          e.currentTarget.setAttribute('aria-expanded', String(!hint.hidden));
+        },
+      }, t('install.button'))),
+    hint);
 }
 
 const LANG_NAMES = { de: 'Deutsch', en: 'English' };
