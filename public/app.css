@@ -175,6 +175,7 @@ a { color: var(--accent); }
   box-shadow: 0 1px 6px rgb(0 0 0 / 0.25);
 }
 .legend-body li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.legend-body li[hidden] { display: none; }
 .legend-body svg { width: 20px; height: 20px; flex: none; }
 .lg-open { fill: var(--mk-open-fill); stroke: var(--mk-open-ring); stroke-width: 1.5; }
 .lg-own { fill: var(--mk-way); stroke: var(--mk-way-edge); stroke-width: 2.5; }

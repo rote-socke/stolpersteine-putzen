@@ -27,6 +27,8 @@ const de = {
   'legend.me': 'Dein Standort',
   'legend.mate': 'Mitglied deiner Gruppe',
   'legend.peer': 'Andere Gruppe',
+  'legend.otherNoGroup': 'Eine Gruppe ist unterwegs',
+  'legend.peerNoGroup': 'Mitglied einer Gruppe',
   'locate.label': 'Mein Standort',
 
   'toast.searching': 'Standort wird gesucht …',
@@ -221,6 +223,8 @@ const en = {
   'legend.me': 'Your location',
   'legend.mate': 'Member of your group',
   'legend.peer': 'Another group',
+  'legend.otherNoGroup': 'A group is on its way',
+  'legend.peerNoGroup': 'Member of a group',
   'locate.label': 'My location',
 
   'toast.searching': 'Finding your location …',

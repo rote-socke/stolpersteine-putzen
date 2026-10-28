@@ -319,6 +319,20 @@ function renderPeople() {
 
 // ---------- legend ----------
 
+/** Without a group there is no own reservation and no group mates; other phones show only for the organizer. */
+function updateLegend() {
+  const label = (id, key) => {
+    const span = $(id).querySelector('span');
+    span.dataset.i18n = key;
+    span.textContent = t(key);
+  };
+  $('legend-own').hidden = !group;
+  $('legend-mate').hidden = !group;
+  $('legend-peer').hidden = !group && !organizerCode;
+  label('legend-other', group ? 'legend.other' : 'legend.otherNoGroup');
+  label('legend-peer', group ? 'legend.peer' : 'legend.peerNoGroup');
+}
+
 $('legend-toggle').addEventListener('click', () => {
   const body = $('legend-body');
   body.hidden = !body.hidden;
@@ -722,6 +736,7 @@ function closeDetail() {
 }
 
 function renderAll() {
+  updateLegend();
   renderMap();
   renderSheet();
 }
