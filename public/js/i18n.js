@@ -8,9 +8,9 @@ const KEY = 'stolpersteine-putzen.lang';
 export const LANGS = ['de', 'en'];
 
 const de = {
-  'meta.title': 'Stolpersteine putzen',
+  'meta.title': 'Stolpersteine',
   'meta.description': 'Gemeinsam Stolpersteine in Stuttgart putzen: Karte, nächste offene Steine, wer wohin unterwegs ist.',
-  'meta.appTitle': 'Steine putzen',
+  'meta.appTitle': 'Stolpersteine',
   'map.aria': 'Karte der Stolpersteine',
   'group.none': 'Keiner Gruppe beigetreten',
   'group.fallbackName': 'Eine Gruppe',
@@ -202,9 +202,9 @@ const de = {
 };
 
 const en = {
-  'meta.title': 'Cleaning Stolpersteine',
+  'meta.title': 'Stolpersteine',
   'meta.description': 'Clean Stolpersteine in Stuttgart together: map, nearest open stones, who is heading where.',
-  'meta.appTitle': 'Cleaning stones',
+  'meta.appTitle': 'Stolpersteine',
   'map.aria': 'Map of the Stolpersteine',
   'group.none': 'Not in a group',
   'group.fallbackName': 'A group',

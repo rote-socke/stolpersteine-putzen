@@ -1,6 +1,6 @@
 {
-  "name": "Stolpersteine putzen",
-  "short_name": "Steine putzen",
+  "name": "Stolpersteine",
+  "short_name": "Stolpersteine",
   "description": "Gemeinsam Stolpersteine in Stuttgart putzen: Karte, nächste offene Steine, wer wohin unterwegs ist.",
   "lang": "de",
   "start_url": "/",
