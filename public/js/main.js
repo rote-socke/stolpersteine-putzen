@@ -9,6 +9,7 @@ import {
   readJoinFragment, removeFragment, saveGroup, saveOrganizerCode, saveShareLocation,
 } from './group.js';
 import { renderHelp } from './help.js';
+import { renderPrivacy } from './privacy.js';
 import { createMap } from './map.js';
 import { initSheetDrag } from './sheet.js';
 import { getLang, onLangChange, setLang, t } from './i18n.js';
@@ -483,15 +484,21 @@ function helpIcon() {
   return svg;
 }
 
+// One dialog for the cleaning guide and the privacy note.
 const helpDialog = $('help-dialog');
+let infoView = 'help';
 function renderHelpDialog() {
-  $('help-dialog-title').textContent = t('help.title');
-  renderHelp($('help-dialog-body'));
+  $('help-dialog-title').textContent = t(`${infoView}.title`);
+  (infoView === 'privacy' ? renderPrivacy : renderHelp)($('help-dialog-body'));
 }
-function openHelp() {
+function openInfo(which) {
+  infoView = which;
   renderHelpDialog();
   helpDialog.showModal();
 }
+const openHelp = () => openInfo('help');
+const privacyLink = () => h('button', { type: 'button', class: 'linklike privacy-link', onclick: () => openInfo('privacy') },
+  t('privacy.button'));
 helpDialog.addEventListener('click', (e) => {
   if (e.target === helpDialog || e.target.closest('[data-close]')) helpDialog.close();
 });
@@ -543,7 +550,8 @@ function shareAsk() {
     h('p', { class: 'muted share-ask-text' }, t('share.askText')),
     h('div', { class: 'actions' },
       h('button', { type: 'button', class: 'btn btn-small btn-primary', onclick: () => choose(true) }, t('btn.share')),
-      h('button', { type: 'button', class: 'btn btn-small', onclick: () => choose(false) }, t('btn.dontShare'))));
+      h('button', { type: 'button', class: 'btn btn-small', onclick: () => choose(false) }, t('btn.dontShare'))),
+    privacyLink());
 }
 
 function renderHome() {
@@ -783,7 +791,7 @@ function shareSwitch() {
   return h('div', {},
     h('label', { class: 'share-row' }, input, t('share.switch')),
     h('p', { class: 'muted share-note' },
-      t('share.note')));
+      t('share.note'), ' ', privacyLink()));
 }
 
 // ---------- install ----------
@@ -897,6 +905,7 @@ function renderGroupDialog() {
       languageSwitch(),
       installSection(),
       orgaEntry(),
+      privacyLink(),
     );
   } else {
     dialogView = 'group';
@@ -907,6 +916,7 @@ function renderGroupDialog() {
       languageSwitch(),
       installSection(),
       orgaEntry(),
+      privacyLink(),
     );
   }
   renderAll();

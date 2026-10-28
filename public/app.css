@@ -573,3 +573,9 @@ a { color: var(--accent); }
 .help .help-links { display: flex; flex-direction: column; margin: 4px 0 0; padding: 0; list-style: none; font-size: 0.95rem; }
 .help-links li { margin: 0; }
 .help-links a { display: inline-block; padding: 10px 0; }
+
+/* Quiet link to the privacy note (share question, share switch, group dialog). */
+.privacy-link { font-weight: 400; font-size: 0.85rem; }
+.dialog .privacy-link { display: block; margin-top: 16px; padding: 8px 0; }
+.share-note .privacy-link { display: inline; margin: 0; padding: 0; }
+.share-ask .privacy-link { margin-top: 6px; }
