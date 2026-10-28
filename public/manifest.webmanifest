@@ -1,0 +1,17 @@
+{
+  "name": "Stolpersteine putzen",
+  "short_name": "Steine putzen",
+  "description": "Gemeinsam Stolpersteine in Stuttgart putzen: Karte, nächste offene Steine, wer wohin unterwegs ist.",
+  "lang": "de",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f1ea",
+  "theme_color": "#f4f1ea",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

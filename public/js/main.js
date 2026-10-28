@@ -757,6 +757,41 @@ function shareSwitch() {
       + 'Es wird nur die letzte Position gespeichert, höchstens 10 Minuten lang, ohne Verlauf.'));
 }
 
+// ---------- install ----------
+
+let installEvent = null;        // Chromium's beforeinstallprompt, kept until used
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIosSafari = () => /iPad|iPhone|iPod/.test(navigator.userAgent) && !/CriOS|FxiOS|EdgiOS/.test(navigator.userAgent);
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installEvent = e;
+  if (dialog.open && dialogView === 'group') renderGroupDialog();
+});
+window.addEventListener('appinstalled', () => {
+  installEvent = null;
+  if (dialog.open && dialogView === 'group') renderGroupDialog();
+});
+
+function installSection() {
+  if (isStandalone()) return document.createDocumentFragment(); // replaceChildren() would print "null"
+  if (installEvent) {
+    return h('div', { class: 'actions' },
+      h('button', {
+        type: 'button', class: 'btn',
+        onclick: async () => {
+          const e = installEvent;
+          installEvent = null; // a prompt can be used once
+          e.prompt();
+          await e.userChoice;
+          renderGroupDialog();
+        },
+      }, 'App installieren'));
+  }
+  if (isIosSafari()) return h('p', { class: 'muted' }, 'App installieren: Teilen → Zum Home-Bildschirm');
+  return document.createDocumentFragment();
+}
+
 function renderGroupDialog() {
   const body = $('group-dialog-body');
   if (group) {
@@ -783,6 +818,7 @@ function renderGroupDialog() {
             toast('Du hast die Gruppe verlassen.');
           },
         }, 'Gruppe verlassen')),
+      installSection(),
       orgaEntry(),
     );
   } else {
@@ -791,6 +827,7 @@ function renderGroupDialog() {
     body.replaceChildren(
       h('p', { class: 'hint' }, 'Zum Mitmachen den QR-Code deiner Gruppe scannen.'),
       h('p', { class: 'muted' }, 'Ohne Gruppe kannst du die Karte nur ansehen. Den Code hat jemand aus deiner Gruppe oder die Orga.'),
+      installSection(),
       orgaEntry(),
     );
   }
@@ -1130,5 +1167,9 @@ async function start() {
 window.addEventListener('hashchange', () => {
   if (readJoinFragment(location.hash)) handleJoin().then(renderAll);
 });
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch((err) => console.error('sw', err));
+}
 
 start();
