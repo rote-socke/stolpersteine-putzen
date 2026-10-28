@@ -28,21 +28,22 @@ export function clearGroup() {
   }
 }
 
-// Opt-in sharing of this phone's position with the other groups' members. Default off.
+// Opt-in sharing of this phone's position with the other groups' members.
+// null = not asked yet, true = on, false = off.
 const SHARE_KEY = 'stolpersteine-putzen.share-location';
 
 export function loadShareLocation() {
   try {
-    return localStorage.getItem(SHARE_KEY) === '1';
+    const v = localStorage.getItem(SHARE_KEY);
+    return v === '1' ? true : v === '0' ? false : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
 export function saveShareLocation(on) {
   try {
-    if (on) localStorage.setItem(SHARE_KEY, '1');
-    else localStorage.removeItem(SHARE_KEY);
+    localStorage.setItem(SHARE_KEY, on ? '1' : '0');
   } catch {
     /* private mode: the choice lasts only for this page view */
   }

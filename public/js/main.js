@@ -9,6 +9,7 @@ import {
   readJoinFragment, removeFragment, saveGroup, saveOrganizerCode, saveShareLocation,
 } from './group.js';
 import { createMap } from './map.js';
+import { initSheetDrag } from './sheet.js';
 import { distanceMeters, formatDayTime, formatDistance, h, navigationUrl } from './dom.js';
 
 const POLL_MS = 15000;
@@ -32,7 +33,7 @@ let view = { mode: 'home' };    // or { mode: 'detail', id }
 let collapsed = false;
 let connectionLost = false;
 const deviceId = loadDeviceId();
-let shareLocation = loadShareLocation(); // opt-in, default off
+let shareLocation = loadShareLocation(); // true, false, or null = not asked yet
 let people = [];                // other phones, from GET /api/presence
 
 const $ = (id) => document.getElementById(id);
@@ -232,7 +233,7 @@ function onPosition(p) {
     mapApi.map.setView([position.lat, position.lon], Math.max(mapApi.map.getZoom(), 17));
   }
   if (!prev || wasStale || distanceMeters(prev, position) > 15) {
-    if (view.mode === 'home') renderSheet();
+    if (view.mode === 'home' || shareAskWanted()) renderSheet();
   }
 }
 $('locate-button').addEventListener('click', () => startLocating({ center: true }));
@@ -262,7 +263,7 @@ let sharedToken = null;         // token that wrote it, kept so a delete still w
 let lastSentAt = 0;
 
 function syncSharing() {
-  const want = shareLocation && group && position && !stale;
+  const want = shareLocation === true && group && position && !stale;
   if (want) {
     if (!sharing || Date.now() - lastSentAt >= SHARE_MS) sendPosition();
   } else if (sharing) {
@@ -465,16 +466,46 @@ function sheetHead(title, { onClose } = {}) {
   return h('div', { class: 'sheet-head' },
     h('button', {
       type: 'button', class: 'sheet-toggle', 'aria-expanded': String(!collapsed),
+      'aria-label': `Liste ein-/ausklappen: ${title}`,
       onclick: () => { collapsed = !collapsed; renderSheet(); },
     }, h('span', { class: 'sheet-grip', 'aria-hidden': 'true' }), h('span', { class: 'sheet-title' }, title)),
     onClose && h('button', { type: 'button', class: 'icon-button', 'aria-label': 'Schließen', onclick: onClose }, '✕'),
   );
 }
 
+function setCollapsed(value) {
+  collapsed = value;
+  renderSheet();
+}
+initSheetDrag(sheet, { isCollapsed: () => collapsed, setCollapsed });
+
 function renderSheet() {
   sheet.classList.toggle('is-collapsed', collapsed);
   if (view.mode === 'detail' && byId.has(view.id)) renderDetail(byId.get(view.id));
   else renderHome();
+  if (shareAskWanted()) sheet.querySelector('.sheet-head')?.after(shareAsk());
+}
+
+// Asked once, when this phone is in a group and has a position and nothing was chosen yet.
+function shareAskWanted() {
+  return Boolean(group && position && shareLocation === null);
+}
+
+function setShareLocation(on) {
+  shareLocation = on;
+  saveShareLocation(on);
+  if (on && watchId === null) startLocating({ center: false });
+  syncSharing();
+}
+
+function shareAsk() {
+  const choose = (on) => { setShareLocation(on); renderSheet(); };
+  return h('div', { class: 'share-ask', role: 'group', 'aria-label': 'Standort teilen' },
+    h('p', { class: 'share-ask-title' }, 'Standort mit den Gruppen teilen?'),
+    h('p', { class: 'muted share-ask-text' }, 'Andere Gruppen sehen, wo ihr seid – nur solange die App offen ist.'),
+    h('div', { class: 'actions' },
+      h('button', { type: 'button', class: 'btn btn-small btn-primary', onclick: () => choose(true) }, 'Teilen'),
+      h('button', { type: 'button', class: 'btn btn-small', onclick: () => choose(false) }, 'Nicht teilen')));
 }
 
 function renderHome() {
@@ -696,12 +727,10 @@ function inviteSection(target) {
 
 function shareSwitch() {
   const input = h('input', {
-    type: 'checkbox', role: 'switch', checked: shareLocation,
+    type: 'checkbox', role: 'switch', checked: shareLocation === true,
     onchange: (e) => {
-      shareLocation = e.target.checked;
-      saveShareLocation(shareLocation);
-      if (shareLocation && watchId === null) startLocating({ center: false });
-      syncSharing();
+      setShareLocation(e.target.checked);
+      renderSheet(); // a pending question is settled
     },
   });
   return h('div', {},
