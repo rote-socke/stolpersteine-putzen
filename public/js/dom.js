@@ -20,7 +20,6 @@ export function h(tag, props = {}, ...children) {
 const timeFmt = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' });
 const dayFmt = new Intl.DateTimeFormat('de-DE', { day: '2-digit', month: '2-digit' });
 
-export const formatTime = (ms) => timeFmt.format(new Date(ms));
 export const formatDayTime = (ms) => `${dayFmt.format(new Date(ms))} ${timeFmt.format(new Date(ms))}`;
 
 export function formatDistance(m) {

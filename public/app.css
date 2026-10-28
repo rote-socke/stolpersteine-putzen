@@ -27,6 +27,7 @@
   /* Map markers. Tiles stay light in dark mode, so these have no dark variant.
      js/map.js STYLES mirrors these values; keep both in sync. */
   --mk-open-fill: #8c867b;
+  --mk-open-ring: #e3b92d;
   --mk-open-edge: #1c1812;
   --mk-way: #1a5fc0;
   --mk-way-edge: #06183a;
@@ -88,52 +89,6 @@ button, input, textarea { font: inherit; color: inherit; }
 
 a { color: var(--accent); }
 
-/* ---------- top bar ---------- */
-
-.topbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: calc(6px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left));
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
-  z-index: 1100;
-}
-
-.brand {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 700;
-  line-height: 1.15;
-  white-space: nowrap;
-  flex: none;
-}
-.brand span { color: var(--brass); font-weight: 600; }
-
-.group-button {
-  margin-left: auto;
-  min-height: 44px;
-  min-width: 0;
-  max-width: 62%;
-  padding: 6px 12px;
-  border: 2px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-.group-button.has-group { border-color: var(--st-way); }
-.group-button:not(.has-group) { font-size: 0.82rem; line-height: 1.15; }
-.group-button:not(.has-group) .group-button-label { white-space: normal; }
-.group-button-label {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ---------- map ---------- */
 
 .map-wrap {
@@ -147,6 +102,10 @@ a { color: var(--accent); }
   inset: 0;
   background: #ddd;
 }
+
+/* No top bar: keep Leaflet's top controls below the status bar / camera cutout. */
+.leaflet-top { top: env(safe-area-inset-top); }
+.leaflet-left { left: env(safe-area-inset-left); }
 
 .leaflet-touch .leaflet-bar a {
   width: 44px;
@@ -167,14 +126,21 @@ a { color: var(--accent); }
   border-radius: 50%;
 }
 
-.legend {
+/* Floating controls: group + legend top-right, locate under the zoom buttons
+   (top-left), so none of them meet the zoom control, attribution or toast. */
+.map-controls {
   position: absolute;
-  top: 10px;
+  top: calc(10px + env(safe-area-inset-top));
   right: calc(10px + env(safe-area-inset-right));
   z-index: 1000;
-  max-width: calc(100% - 90px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  /* leaves room for the zoom control (54px) on the left */
+  max-width: calc(100% - 74px - env(safe-area-inset-left) - env(safe-area-inset-right));
 }
-.legend-toggle, .locate-button {
+.map-button, .locate-button {
   min-height: 44px;
   padding: 8px 14px;
   border: 2px solid rgb(0 0 0 / 0.25);
@@ -186,7 +152,15 @@ a { color: var(--accent); }
   box-shadow: 0 1px 6px rgb(0 0 0 / 0.25);
   cursor: pointer;
 }
-.legend-toggle { margin-left: auto; display: block; }
+.group-button { max-width: 100%; font-size: 0.9rem; }
+.group-button.has-group { border-color: var(--mk-way); }
+.group-button-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.legend { display: flex; flex-direction: column; align-items: flex-end; }
 .legend-body {
   list-style: none;
   margin: 6px 0 0;
@@ -199,7 +173,8 @@ a { color: var(--accent); }
 }
 .legend-body li { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
 .legend-body svg { width: 20px; height: 20px; flex: none; }
-.lg-open { fill: var(--mk-open-fill); stroke: var(--mk-open-edge); stroke-width: 2.5; }
+.lg-open { fill: var(--mk-open-fill); stroke: var(--mk-open-ring); stroke-width: 3; }
+.lg-open-edge { fill: var(--mk-open-edge); }
 .lg-own { fill: var(--mk-way); stroke: var(--mk-way-edge); stroke-width: 2.5; }
 .lg-other { fill: #ffffff; stroke: var(--mk-way); stroke-width: 3.5; }
 .lg-cleaned { fill: var(--mk-cleaned-fill); stroke: var(--mk-cleaned-edge); stroke-width: 1.5; }
@@ -208,11 +183,27 @@ a { color: var(--accent); }
 
 .locate-button {
   position: absolute;
-  right: calc(10px + env(safe-area-inset-right));
-  bottom: 28px;
+  /* below the two 44px zoom buttons (10px margin + about 92px) */
+  top: calc(116px + env(safe-area-inset-top));
+  left: calc(10px + env(safe-area-inset-left));
   z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  padding: 0;
 }
-.locate-button.is-active { border-color: #1250a8; }
+.locate-button svg { display: block; }
+.locate-button.is-active { border-color: #1250a8; color: #1250a8; }
+.locate-button.is-searching { animation: locate-pulse 1.6s ease-in-out infinite; }
+@keyframes locate-pulse {
+  0%, 100% { box-shadow: 0 1px 6px rgb(0 0 0 / 0.25), 0 0 0 0 rgb(18 80 168 / 0.5); }
+  50% { box-shadow: 0 1px 6px rgb(0 0 0 / 0.25), 0 0 0 9px rgb(18 80 168 / 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .locate-button.is-searching { animation: none; border-style: dashed; }
+}
 
 /* ---------- sheet ---------- */
 
@@ -416,7 +407,8 @@ a { color: var(--accent); }
 .toast {
   position: fixed;
   left: 50%;
-  top: calc(64px + env(safe-area-inset-top));
+  /* above the sheet and the map attribution, clear of the top controls */
+  bottom: calc(var(--sheet-h, 120px) + 40px);
   transform: translateX(-50%);
   width: max-content;
   max-width: calc(100vw - 32px);
@@ -512,8 +504,3 @@ a { color: var(--accent); }
 .orga-group-way { margin: 2px 0 0; font-size: 0.9rem; }
 .orga-group .actions { margin: 8px 0 0; }
 .orga-group .actions > .btn { flex: 1 1 40%; }
-
-@media (max-width: 380px) {
-  .brand { font-size: 0.95rem; }
-  .brand span { display: block; }
-}

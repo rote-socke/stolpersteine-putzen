@@ -9,7 +9,7 @@ import {
   saveGroup, saveOrganizerCode,
 } from './group.js';
 import { createMap } from './map.js';
-import { distanceMeters, formatDayTime, formatDistance, formatTime, h, navigationUrl } from './dom.js';
+import { distanceMeters, formatDayTime, formatDistance, h, navigationUrl } from './dom.js';
 
 const POLL_MS = 15000;
 const NEXT_COUNT = 10;
@@ -82,10 +82,6 @@ function ownReservation() {
   return null;
 }
 
-function minutesLeft(s) {
-  return Math.max(0, Math.ceil((s.expiresAt - serverNow()) / 60000));
-}
-
 function stonesSummary(loc) {
   const names = loc.stones.map((s) => s.name);
   if (names.length === 1) return names[0];
@@ -110,56 +106,145 @@ mapApi.map.on('moveend', () => {
 
 // Keep Leaflet's size in step with the sheet, which changes the map's height.
 new ResizeObserver(() => mapApi.map.invalidateSize({ pan: false })).observe($('map'));
+// The toast sits above the sheet; CSS reads the sheet height from --sheet-h.
+new ResizeObserver(() => document.documentElement.style.setProperty('--sheet-h', `${sheet.offsetHeight}px`)).observe(sheet);
 
 // ---------- geolocation ----------
 
+const STALE_MS = 60000;         // no fix for this long: ask for a fresh one
+const DENIED_HINT = 'Standort nicht erlaubt. Du kannst ihn in den Browser-Einstellungen freigeben.';
 let centerOnNextFix = false;
+let wantLocation = false;       // the user asked for location; restart when permission returns
+let lastFixAt = 0;
+let stale = false;
+let staleTimer = null;
+let searchToastShown = false;
+
+function updateLocateButton() {
+  const btn = $('locate-button');
+  btn.classList.toggle('is-active', watchId !== null);
+  btn.classList.toggle('is-searching', watchId !== null && (!position || stale));
+}
+
+function setStale(value) {
+  if (stale === value) return;
+  stale = value;
+  mapApi.setUserStale(value);
+  updateLocateButton();
+  if (view.mode === 'home') renderSheet();
+}
+
+function stopLocating() {
+  if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+  watchId = null;
+  clearInterval(staleTimer);
+  staleTimer = null;
+  updateLocateButton();
+}
+
+function onDenied() {
+  stopLocating();
+  if (position) setStale(true);
+  toast(DENIED_HINT, { error: true });
+}
+
+/** Asks for one fresh fix: the watch may be silent after location was switched off. */
+let rechecking = false;
+function recheckPosition() {
+  if (rechecking) return;
+  rechecking = true;
+  navigator.geolocation.getCurrentPosition((p) => {
+    rechecking = false;
+    onPosition(p);
+  }, (err) => {
+    rechecking = false;
+    if (err.code === err.PERMISSION_DENIED) onDenied();
+    else if (position) setStale(true);
+  }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
+}
+
 function startLocating({ center }) {
   if (!('geolocation' in navigator)) {
     toast('Dein Gerät kann den Standort nicht bestimmen.', { error: true });
     return;
   }
+  wantLocation = true;
   if (center && position) mapApi.map.setView([position.lat, position.lon], Math.max(mapApi.map.getZoom(), 17));
-  centerOnNextFix = center && !position;
-  if (watchId !== null) return;
-  $('locate-button').classList.add('is-active');
+  centerOnNextFix = center && (!position || stale);
+  if (watchId !== null) {
+    if (stale) recheckPosition();
+    return;
+  }
   // Without Google location services (e.g. GrapheneOS) the first GPS fix can
   // take a minute or more, so the watch has no timeout and only a denied
   // permission stops it. A quick coarse request runs alongside for an early fix.
   navigator.geolocation.getCurrentPosition((p) => { if (!position) onPosition(p); }, () => {},
     { enableHighAccuracy: false, maximumAge: 60000, timeout: 20000 });
-  let warned = false;
   watchId = navigator.geolocation.watchPosition(
     onPosition,
     (err) => {
       if (err.code === err.PERMISSION_DENIED) {
-        navigator.geolocation.clearWatch(watchId);
-        watchId = null;
-        $('locate-button').classList.remove('is-active');
-        toast('Standort nicht erlaubt. Du kannst ihn in den Browser-Einstellungen freigeben.', { error: true });
+        onDenied();
         return;
       }
-      if (warned || position) return;
-      warned = true;
-      toast(`Standort wird noch gesucht – draußen klappt es meist schneller. (Code ${err.code}: ${err.message})`, { error: true });
+      if (position) {
+        setStale(true);
+        return;
+      }
+      if (!searchToastShown) {
+        searchToastShown = true;
+        toast('Standort wird gesucht …');
+      }
     },
     { enableHighAccuracy: true, maximumAge: 10000 },
   );
+  // A phone standing still may send no updates, so a silent watch only asks
+  // for a fresh fix; the position turns stale only if that fails.
+  staleTimer = setInterval(() => {
+    if (position && !stale && Date.now() - lastFixAt > STALE_MS) recheckPosition();
+  }, 5000);
+  if (!position && !searchToastShown) {
+    searchToastShown = true;
+    toast('Standort wird gesucht …');
+  }
+  updateLocateButton();
 }
 
 function onPosition(p) {
   const prev = position;
+  const wasStale = stale;
+  lastFixAt = Date.now();
   position = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy };
+  searchToastShown = false;
+  stale = false;
+  mapApi.setUserStale(false);
   mapApi.setUserPosition(position.lat, position.lon, position.accuracy);
+  updateLocateButton();
   if (centerOnNextFix) {
     centerOnNextFix = false;
     mapApi.map.setView([position.lat, position.lon], Math.max(mapApi.map.getZoom(), 17));
   }
-  if (!prev || distanceMeters(prev, position) > 15) {
+  if (!prev || wasStale || distanceMeters(prev, position) > 15) {
     if (view.mode === 'home') renderSheet();
   }
 }
 $('locate-button').addEventListener('click', () => startLocating({ center: true }));
+
+// Location can be switched off in the system settings without the page noticing.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && watchId !== null) recheckPosition();
+});
+if (navigator.permissions?.query) {
+  navigator.permissions.query({ name: 'geolocation' }).then((status) => {
+    status.addEventListener('change', () => {
+      if (status.state === 'denied') {
+        if (watchId !== null || position) onDenied();
+      } else if (status.state === 'granted' && wantLocation && watchId === null) {
+        startLocating({ center: false });
+      }
+    });
+  }).catch(() => {});
+}
 
 // ---------- legend ----------
 
@@ -319,9 +404,8 @@ function renderHome() {
   const own = ownReservation();
   if (own) {
     const loc = byId.get(own.id);
-    const mins = minutesLeft(own.state);
     sheet.replaceChildren(
-      sheetHead(`Ihr seid unterwegs · noch ${mins} Min`),
+      sheetHead('Ihr seid unterwegs'),
       h('div', { class: 'sheet-body' },
         h('div', { class: 'reservation' },
           h('p', { class: 'reservation-text' }, 'Zu ',
@@ -357,8 +441,8 @@ function renderHome() {
     h('div', { class: 'sheet-body' },
       !group && h('p', { class: 'hint' }, 'Zum Mitmachen den QR-Code deiner Gruppe scannen.'),
       h('div', { class: 'list-origin' },
-        h('span', { class: 'muted' }, position ? 'Nach Entfernung zu dir' : 'Nach Entfernung zur Kartenmitte'),
-        !position && h('button', { type: 'button', class: 'btn btn-small', onclick: () => startLocating({ center: false }) }, 'Meinen Standort nutzen'),
+        h('span', { class: 'muted' }, !position ? 'Nach Entfernung zur Kartenmitte' : stale ? 'Nach Entfernung zum letzten bekannten Standort' : 'Nach Entfernung zu dir'),
+        (!position || stale) && h('button', { type: 'button', class: 'btn btn-small', onclick: () => startLocating({ center: false }) }, 'Meinen Standort nutzen'),
       ),
       next.length
         ? h('ol', { class: 'next-list' }, next.map(({ loc, d }) => h('li', {},
@@ -376,7 +460,7 @@ function statusLine(s) {
   if (s.status === 'on_the_way') {
     const own = group && s.groupId === group.groupId;
     const who = own ? 'Ihr seid unterwegs' : `${groupName(s)} ist unterwegs`;
-    return { cls: own ? 'status-own' : 'status-other', text: `${who} · bis ${formatTime(s.expiresAt)}` };
+    return { cls: own ? 'status-own' : 'status-other', text: who };
   }
   if (s.status === 'cleaned') {
     return { cls: 'status-cleaned', text: `Geputzt von ${groupName(s)} am ${formatDayTime(s.updatedAt)}` };
