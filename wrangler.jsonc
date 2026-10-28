@@ -12,8 +12,7 @@
     {
       "binding": "DB",
       "database_name": "stolpersteine-putzen",
-      // Replaced with the id printed by `wrangler d1 create` before the first deploy.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "0ebaf620-e637-4259-9abc-3b4ec8d59bb2",
       "migrations_dir": "migrations"
     }
   ]
