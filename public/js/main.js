@@ -1,13 +1,20 @@
 // App controller: loads data, keeps state in sync and renders the sheet and dialogs.
 /* global qrcode */
-import { ApiError, createGroup, getMe, getState, locationAction, saveNote } from './api.js';
-import { clearGroup, inviteLink, loadGroup, readJoinFragment, removeFragment, saveGroup } from './group.js';
+import {
+  ApiError, createGroup, getMe, getState, locationAction, orgaDelete, orgaGroups, orgaInvite, orgaRename,
+  orgaRotate, saveNote,
+} from './api.js';
+import {
+  clearGroup, clearOrganizerCode, inviteLink, loadGroup, loadOrganizerCode, readJoinFragment, removeFragment,
+  saveGroup, saveOrganizerCode,
+} from './group.js';
 import { createMap } from './map.js';
 import { distanceMeters, formatDayTime, formatDistance, formatTime, h, navigationUrl } from './dom.js';
 
 const POLL_MS = 15000;
 const NEXT_COUNT = 10;
 const NOTE_MAX = 500;
+const GROUP_GONE = 'Deine Gruppe ist nicht mehr gültig (gelöscht oder neuer Link erzeugt). Bitte den aktuellen QR-Code deiner Gruppe scannen.';
 
 // ---------- state ----------
 
@@ -16,6 +23,7 @@ const byId = new Map();
 let server = { groups: [], locations: {} };
 let clockOffset = 0;            // server time minus device time
 let group = loadGroup();        // { groupId, groupName, token } or null
+let organizerCode = loadOrganizerCode(); // set while organizer mode is on
 let position = null;            // { lat, lon, accuracy }
 let watchId = null;
 let busy = false;
@@ -191,6 +199,8 @@ async function refresh() {
     }
   }
   renderAll();
+  // A group missing from the list was deleted (or its link replaced): let the token decide.
+  if (group && !server.groups.some((x) => x.id === group.groupId)) await checkStoredGroup();
 }
 
 setInterval(() => {
@@ -223,7 +233,7 @@ function handleError(err) {
   }
   const { status, data } = err;
   if (status === 0) toast('Keine Verbindung. Bitte gleich nochmal versuchen.', { error: true });
-  else if (status === 401) dropGroup('Deine Gruppe ist nicht mehr gültig. Bitte den QR-Code deiner Gruppe neu scannen.');
+  else if (status === 401) dropGroup(GROUP_GONE);
   else if (data.error === 'taken') toast(`${data.groupName ?? 'Eine andere Gruppe'} ist schon unterwegs dorthin.`, { error: true });
   else if (data.error === 'cleaned') toast('Schon geputzt.', { error: true });
   else if (data.error === 'name_taken') toast('Diesen Gruppennamen gibt es schon.', { error: true });
@@ -492,13 +502,13 @@ function qrSvg(text) {
   return qr.createSvgTag({ cellSize: 4, margin: 16, scalable: true, alt: 'QR-Code zum Beitreten' });
 }
 
-function inviteSection() {
-  const link = inviteLink(group);
+function inviteSection(target) {
+  const link = inviteLink(target);
   const qr = h('div', { class: 'qr' });
   qr.innerHTML = qrSvg(link); // generated SVG from our own link, no user HTML
   const share = async () => {
     try {
-      await navigator.share({ title: `Stolpersteine putzen: ${group.groupName}`, text: `Tritt der Gruppe ${group.groupName} bei:`, url: link });
+      await navigator.share({ title: `Stolpersteine putzen: ${target.groupName}`, text: `Tritt der Gruppe ${target.groupName} bei:`, url: link });
     } catch (err) {
       if (err?.name !== 'AbortError') toast('Teilen hat nicht geklappt. Nutze „Link kopieren“.', { error: true });
     }
@@ -523,43 +533,18 @@ function inviteSection() {
   );
 }
 
-function createGroupForm({ open }) {
-  const code = h('input', { type: 'password', autocomplete: 'off', required: true, id: 'org-code' });
-  const name = h('input', { type: 'text', maxlength: '40', required: true, id: 'group-name', placeholder: 'z. B. Gruppe A' });
-  const submit = (e) => {
-    e.preventDefault();
-    const n = name.value.trim();
-    if (!n) return;
-    run(async () => {
-      const g = await createGroup(code.value.trim(), n);
-      group = { groupId: g.id, groupName: g.name, token: g.token };
-      saveGroup(group);
-      renderGroupButton();
-      toast(`Gruppe „${g.name}“ angelegt. Du bist jetzt in dieser Gruppe.`);
-      renderGroupDialog();
-      refresh();
-    });
-  };
-  return h('details', { class: 'create', open },
-    h('summary', {}, 'Neue Gruppe anlegen (Orga)'),
-    h('form', { class: 'form', onsubmit: submit },
-      h('label', { for: 'org-code' }, 'Orga-Code'), code,
-      h('label', { for: 'group-name' }, 'Name der Gruppe'), name,
-      h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, 'Gruppe anlegen')));
-}
-
 function renderGroupDialog() {
   const body = $('group-dialog-body');
   if (group) {
     $('group-dialog-title').textContent = group.groupName;
     body.replaceChildren(
       h('p', { class: 'muted' }, 'Du bist in dieser Gruppe.'),
-      inviteSection(),
+      inviteSection(group),
       h('div', { class: 'actions' },
         h('button', {
           type: 'button', class: 'btn btn-danger',
           onclick: () => {
-            if (!confirm(`Gruppe „${group.groupName}“ auf diesem Handy verlassen?`)) return;
+            if (!confirm(`Gruppe „${group.groupName}“ auf diesem Handy verlassen? Du kannst nur über den QR-Code bzw. Einladungslink wieder beitreten.`)) return;
             group = null;
             clearGroup();
             renderGroupButton();
@@ -568,17 +553,208 @@ function renderGroupDialog() {
             toast('Du hast die Gruppe verlassen.');
           },
         }, 'Gruppe verlassen')),
-      createGroupForm({ open: false }),
+      orgaEntry(),
     );
   } else {
     $('group-dialog-title').textContent = 'Keiner Gruppe beigetreten';
     body.replaceChildren(
       h('p', { class: 'hint' }, 'Zum Mitmachen den QR-Code deiner Gruppe scannen.'),
       h('p', { class: 'muted' }, 'Ohne Gruppe kannst du die Karte nur ansehen. Den Code hat jemand aus deiner Gruppe oder die Orga.'),
-      createGroupForm({ open: false }),
+      orgaEntry(),
     );
   }
   renderAll();
+}
+
+// ---------- organizer ----------
+
+function orgaEntry() {
+  return h('div', { class: 'create' },
+    h('button', { type: 'button', class: 'btn', onclick: () => (organizerCode ? showOrga() : renderOrgaLogin()) }, 'Organisation'));
+}
+
+/** Runs an organizer request; a 401 means the code is gone, so forget it and ask again. */
+function orgaTask(task) {
+  return run(async () => {
+    try {
+      await task();
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) throw err;
+      organizerCode = null;
+      clearOrganizerCode();
+      toast('Der Orga-Code stimmt nicht (mehr). Bitte neu eingeben.', { error: true });
+      renderOrgaLogin();
+    }
+  });
+}
+
+function orgaBack() {
+  return h('button', { type: 'button', class: 'btn btn-small', onclick: renderGroupDialog }, '‹ Zurück');
+}
+
+function renderOrgaLogin() {
+  $('group-dialog-title').textContent = 'Organisation';
+  const code = h('input', { type: 'password', autocomplete: 'off', required: true, id: 'org-code' });
+  const submit = (e) => {
+    e.preventDefault();
+    const value = code.value.trim();
+    if (!value) return;
+    orgaTask(async () => {
+      const data = await orgaGroups(value);
+      organizerCode = value;
+      saveOrganizerCode(value);
+      toast('Orga-Modus ist an.');
+      renderOrga(data.groups);
+      refresh();
+    });
+  };
+  $('group-dialog-body').replaceChildren(
+    h('p', { class: 'muted' }, 'Mit dem Orga-Code legst du Gruppen an und verwaltest ihre Einladungen.'),
+    h('form', { class: 'form', onsubmit: submit },
+      h('label', { for: 'org-code' }, 'Orga-Code'), code,
+      h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, 'Weiter')),
+    h('div', { class: 'actions' }, orgaBack()),
+  );
+}
+
+function showOrga() {
+  return orgaTask(async () => {
+    const data = await orgaGroups(organizerCode);
+    renderOrga(data.groups);
+    refresh();
+  });
+}
+
+function progressLine(done, total, label) {
+  return h('div', { class: 'progress' },
+    h('p', { class: 'progress-text' }, h('strong', {}, `${done} von ${total}`), ` ${label} geputzt`),
+    h('div', { class: 'progress-bar', 'aria-hidden': 'true' },
+      h('div', { class: 'progress-fill', style: `width: ${total ? Math.round((done / total) * 100) : 0}%` })));
+}
+
+function renderOrga(groups) {
+  $('group-dialog-title').textContent = 'Organisation';
+  const cleaned = (list) => list.filter((l) => stateOf(l.id).status === 'cleaned').length;
+  const cannstatt = locations.filter((l) => l.district === 'cannstatt');
+
+  const nameInput = h('input', { type: 'text', maxlength: '40', required: true, id: 'group-name', placeholder: 'z. B. Gruppe A' });
+  const create = (e) => {
+    e.preventDefault();
+    const n = nameInput.value.trim();
+    if (!n) return;
+    orgaTask(async () => {
+      const g = await createGroup(organizerCode, n);
+      toast(`Gruppe „${g.name}“ angelegt.`);
+      showInvite({ groupId: g.id, groupName: g.name, token: g.token });
+    });
+  };
+
+  $('group-dialog-body').replaceChildren(
+    progressLine(cleaned(cannstatt), cannstatt.length, 'Cannstatter Adressen'),
+    progressLine(cleaned(locations), locations.length, 'Adressen insgesamt'),
+    groups.length
+      ? h('ul', { class: 'orga-groups' }, groups.map((g) => orgaGroupItem(g)))
+      : h('p', { class: 'muted' }, 'Noch keine Gruppen.'),
+    h('details', { class: 'create' },
+      h('summary', {}, 'Neue Gruppe anlegen'),
+      h('form', { class: 'form', onsubmit: create },
+        h('label', { for: 'group-name' }, 'Name der Gruppe'), nameInput,
+        h('button', { type: 'submit', class: 'btn btn-primary', 'data-action': '' }, 'Gruppe anlegen'))),
+    h('div', { class: 'actions' },
+      orgaBack(),
+      h('button', {
+        type: 'button', class: 'btn btn-small',
+        onclick: () => {
+          organizerCode = null;
+          clearOrganizerCode();
+          renderGroupDialog();
+          toast('Orga-Modus beendet.');
+        },
+      }, 'Orga-Modus beenden')),
+  );
+}
+
+function orgaGroupItem(g) {
+  const target = g.reservation && byId.get(g.reservation.locationId);
+  const btn = (label, onClick, cls = '') =>
+    h('button', { type: 'button', class: `btn btn-small ${cls}`, 'data-action': '', disabled: busy, onclick: onClick }, label);
+  return h('li', { class: 'orga-group' },
+    h('div', { class: 'orga-group-head' },
+      h('strong', { class: 'orga-group-name' }, g.name),
+      h('span', { class: 'muted' }, `${g.cleanedCount} geputzt`)),
+    target && h('p', { class: 'muted orga-group-way' }, `unterwegs zu ${target.address}`),
+    h('div', { class: 'actions' },
+      btn('Einladen', () => orgaTask(async () => {
+        const inv = await orgaInvite(organizerCode, g.id);
+        showInvite({ groupId: inv.id, groupName: inv.name, token: inv.token });
+      })),
+      btn('Beitreten', () => orgaTask(async () => {
+        const inv = await orgaInvite(organizerCode, g.id);
+        group = { groupId: inv.id, groupName: inv.name, token: inv.token };
+        saveGroup(group);
+        renderGroupButton();
+        toast(`Du bist jetzt in der Gruppe „${inv.name}“.`);
+        refresh();
+        await reloadOrga();
+      })),
+      btn('Umbenennen', () => {
+        const name = prompt('Neuer Name der Gruppe', g.name)?.trim();
+        if (!name || name === g.name) return;
+        return orgaTask(async () => {
+          const res = await orgaRename(organizerCode, g.id, name);
+          if (group?.groupId === g.id) {
+            group = { ...group, groupName: res.name };
+            saveGroup(group);
+            renderGroupButton();
+          }
+          toast('Gruppe umbenannt.');
+          refresh();
+          await reloadOrga();
+        });
+      }),
+      btn('Neuen Link erzeugen', () => {
+        if (!confirm(`Neuen Link für „${g.name}“ erzeugen? Alte QR-Codes funktionieren dann nicht mehr.`)) return;
+        return orgaTask(async () => {
+          const inv = await orgaRotate(organizerCode, g.id);
+          // Keep this phone in the group if it was in it.
+          if (group?.groupId === g.id) {
+            group = { ...group, token: inv.token };
+            saveGroup(group);
+          }
+          toast('Neuer Link erzeugt.');
+          showInvite({ groupId: inv.id, groupName: inv.name, token: inv.token });
+        });
+      }),
+      btn('Löschen', () => {
+        const way = g.reservation ? ' Eine laufende Reservierung wird freigegeben.' : '';
+        if (!confirm(`Gruppe „${g.name}“ löschen? Geputzte Steine bleiben markiert.${way}`)) return;
+        return orgaTask(async () => {
+          await orgaDelete(organizerCode, g.id);
+          if (group?.groupId === g.id) {
+            group = null;
+            clearGroup();
+            renderGroupButton();
+          }
+          toast(`Gruppe „${g.name}“ gelöscht.`);
+          refresh();
+          await reloadOrga();
+        });
+      }, 'btn-danger'),
+    ),
+  );
+}
+
+async function reloadOrga() {
+  const data = await orgaGroups(organizerCode);
+  renderOrga(data.groups);
+}
+
+function showInvite(target) {
+  $('group-dialog-title').textContent = target.groupName;
+  $('group-dialog-body').replaceChildren(
+    inviteSection(target),
+    h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn btn-small', onclick: showOrga }, '‹ Zurück zur Organisation')),
+  );
 }
 
 const dialog = $('group-dialog');
@@ -623,7 +799,7 @@ async function checkStoredGroup() {
     }
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
-      dropGroup('Deine Gruppe ist nicht mehr gültig. Bitte den QR-Code deiner Gruppe neu scannen.');
+      dropGroup(GROUP_GONE);
       renderAll();
     }
   }

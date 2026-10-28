@@ -30,8 +30,9 @@ Git workflow: direct on the default branch
 
 - `docs/CONTRACT.md` is the interface between data, API and app. Change it
   only together with every side that uses it.
-- Secrets: the organizer code is the Worker secret `ORGANIZER_CODE`; locally
-  it lives in the git-ignored `.dev.vars`. Cloudflare credentials live in the
+- Secrets: the organizer code is the Worker secret `ORGANIZER_CODE`, group
+  tokens are derived from the Worker secret `INVITE_SECRET`; locally both live
+  in the git-ignored `.dev.vars`. Cloudflare credentials live in the
   git-ignored `.env`. Never commit either.
 - This repo belongs to the `rote-socke` accounts (GitHub and Cloudflare).
   Before any `wrangler` command against Cloudflare, check with

@@ -28,6 +28,33 @@ export function clearGroup() {
   }
 }
 
+// The organizer code, kept on this phone while organizer mode is on.
+const CODE_KEY = 'stolpersteine-putzen.organizer';
+
+export function loadOrganizerCode() {
+  try {
+    return localStorage.getItem(CODE_KEY) || null;
+  } catch {
+    return null; // storage blocked: organizer mode lasts only for this page view
+  }
+}
+
+export function saveOrganizerCode(code) {
+  try {
+    localStorage.setItem(CODE_KEY, code);
+  } catch {
+    /* private mode: the code lives only for this page view */
+  }
+}
+
+export function clearOrganizerCode() {
+  try {
+    localStorage.removeItem(CODE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Reads `#join=<groupId>.<token>` from the address; null if absent or malformed. */
 export function readJoinFragment(hash) {
   const m = /^#join=([^.]+)\.(.+)$/.exec(hash ?? '');

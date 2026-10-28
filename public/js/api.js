@@ -29,6 +29,7 @@ export async function api(method, path, { token, organizerCode, body } = {}) {
   } catch {
     throw new ApiError(0, { error: 'network' });
   }
+  if (res.status === 204) return {};
   let data = null;
   try {
     data = await res.json();
@@ -44,6 +45,14 @@ export const getState = () => api('GET', '/api/state');
 export const getMe = (token) => api('GET', '/api/groups/me', { token });
 export const createGroup = (organizerCode, name) =>
   api('POST', '/api/groups', { organizerCode, body: { name } });
+
+const orgaPath = (id, action = '') => `/api/orga/groups/${encodeURIComponent(id)}${action}`;
+export const orgaGroups = (organizerCode) => api('GET', '/api/orga/groups', { organizerCode });
+export const orgaInvite = (organizerCode, id) => api('GET', orgaPath(id, '/invite'), { organizerCode });
+export const orgaRotate = (organizerCode, id) => api('POST', orgaPath(id, '/rotate'), { organizerCode });
+export const orgaRename = (organizerCode, id, name) =>
+  api('PATCH', orgaPath(id), { organizerCode, body: { name } });
+export const orgaDelete = (organizerCode, id) => api('DELETE', orgaPath(id), { organizerCode });
 
 const locPath = (id, action) => `/api/locations/${encodeURIComponent(id)}/${action}`;
 export const locationAction = (token, id, action) => api('POST', locPath(id, action), { token });

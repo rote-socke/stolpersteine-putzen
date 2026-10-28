@@ -9,7 +9,7 @@ let handle: (r: Request, e: Env) => Promise<Response>;
 
 beforeEach(() => {
   t = 1_800_000_000_000;
-  env = { DB: createTestDb(), ASSETS: {} as Fetcher, ORGANIZER_CODE: CODE };
+  env = { DB: createTestDb(), ASSETS: {} as Fetcher, ORGANIZER_CODE: CODE, INVITE_SECRET: 'invite-secret' };
   handle = createApi({ locationIds: new Set(['loc1', 'loc2']), now: () => t });
 });
 
@@ -26,6 +26,10 @@ async function call(method: string, path: string, opts: { token?: string; code?:
     env,
   );
   return { status: res.status, cache: res.headers.get('cache-control'), body: (await res.json()) as any };
+}
+
+async function orga(method: string, path: string, body?: unknown) {
+  return call(method, `/api/orga${path}`, { code: CODE, body });
 }
 
 async function newGroup(name: string) {
@@ -154,5 +158,115 @@ describe('clean, reopen, notes, state', () => {
       },
     });
     expect(JSON.stringify(r.body)).not.toContain(a.token);
+  });
+});
+
+describe('organizer', () => {
+  it('requires the organizer code on every endpoint', async () => {
+    const g = await newGroup('A');
+    for (const [method, path] of [
+      ['GET', '/api/orga/groups'],
+      ['GET', `/api/orga/groups/${g.id}/invite`],
+      ['POST', `/api/orga/groups/${g.id}/rotate`],
+      ['PATCH', `/api/orga/groups/${g.id}`],
+      ['DELETE', `/api/orga/groups/${g.id}`],
+    ]) {
+      expect((await call(method, path)).status).toBe(401);
+      expect((await call(method, path, { code: 'nope' })).status).toBe(401);
+    }
+  });
+
+  it('lists groups with cleaned count and live reservation only', async () => {
+    const a = await newGroup('A');
+    t += 1000;
+    const b = await newGroup('B');
+    await call('POST', '/api/locations/loc1/clean', { token: a.token });
+    await call('POST', '/api/locations/loc2/reserve', { token: b.token });
+    const r = await orga('GET', '/groups');
+    expect(r.status).toBe(200);
+    expect(r.body.groups).toEqual([
+      { id: a.id, name: 'A', createdAt: t - 1000, cleanedCount: 1, reservation: null },
+      { id: b.id, name: 'B', createdAt: t, cleanedCount: 0, reservation: { locationId: 'loc2', expiresAt: t + RESERVATION_MS } },
+    ]);
+    t += RESERVATION_MS;
+    expect((await orga('GET', '/groups')).body.groups[1].reservation).toBeNull();
+  });
+
+  it('derives a stable invite token that works as Bearer', async () => {
+    const g = await newGroup('A');
+    const i1 = await orga('GET', `/groups/${g.id}/invite`);
+    const i2 = await orga('GET', `/groups/${g.id}/invite`);
+    expect(i1.body).toEqual({ id: g.id, name: 'A', token: g.token });
+    expect(i2.body.token).toBe(g.token);
+    expect((await call('GET', '/api/groups/me', { token: i1.body.token })).body).toEqual({ id: g.id, name: 'A' });
+  });
+
+  it('answers 404 for unknown groups', async () => {
+    expect((await orga('GET', '/groups/g_nope/invite')).body.error).toBe('not_found');
+    expect((await orga('POST', '/groups/g_nope/rotate')).status).toBe(404);
+    expect((await orga('PATCH', '/groups/g_nope', { name: 'X' })).status).toBe(404);
+    expect((await orga('DELETE', '/groups/g_nope')).status).toBe(404);
+  });
+
+  it('rotates the token and invalidates the old one', async () => {
+    const g = await newGroup('A');
+    const r = await orga('POST', `/groups/${g.id}/rotate`);
+    expect(r.status).toBe(200);
+    expect(r.body.token).not.toBe(g.token);
+    expect((await call('GET', '/api/groups/me', { token: g.token })).status).toBe(401);
+    expect((await call('GET', '/api/groups/me', { token: r.body.token })).status).toBe(200);
+    expect((await orga('GET', `/groups/${g.id}/invite`)).body.token).toBe(r.body.token);
+  });
+
+  it('renames with the creation rules', async () => {
+    const a = await newGroup('A');
+    await newGroup('B');
+    const ok = await orga('PATCH', `/groups/${a.id}`, { name: ' Neu ' });
+    expect(ok.body).toEqual({ id: a.id, name: 'Neu' });
+    expect((await call('GET', '/api/groups/me', { token: a.token })).body.name).toBe('Neu');
+    expect((await orga('PATCH', `/groups/${a.id}`, { name: 'neu' })).status).toBe(200);
+    const dup = await orga('PATCH', `/groups/${a.id}`, { name: 'b' });
+    expect(dup.status).toBe(409);
+    expect(dup.body.error).toBe('name_taken');
+    expect((await orga('PATCH', `/groups/${a.id}`, { name: ' ' })).status).toBe(400);
+    expect((await orga('PATCH', `/groups/${a.id}`, { name: 'x'.repeat(41) })).status).toBe(400);
+  });
+
+  it('deletes softly: releases the reservation, keeps cleaned rows and notes, frees the name', async () => {
+    const a = await newGroup('A');
+    await call('POST', '/api/locations/loc1/clean', { token: a.token });
+    await call('PUT', '/api/locations/loc1/note', { token: a.token, body: { text: 'Hallo' } });
+    await call('POST', '/api/locations/loc2/reserve', { token: a.token });
+    const d = await handle(
+      new Request(`https://x.test/api/orga/groups/${a.id}`, { method: 'DELETE', headers: { 'x-organizer-code': CODE } }),
+      env,
+    );
+    expect(d.status).toBe(204);
+    expect((await call('GET', '/api/groups/me', { token: a.token })).status).toBe(401);
+    expect((await call('POST', '/api/locations/loc2/reserve', { token: a.token })).status).toBe(401);
+    const s = (await call('GET', '/api/state')).body;
+    expect(s.groups).toEqual([]);
+    expect(s.locations.loc2).toBeUndefined();
+    expect(s.locations.loc1).toMatchObject({ status: 'cleaned', groupName: 'A (gelöscht)', note: 'Hallo' });
+    expect((await orga('GET', '/groups')).body.groups).toEqual([]);
+    expect((await orga('GET', `/groups/${a.id}/invite`)).status).toBe(404);
+    expect((await orga('DELETE', `/groups/${a.id}`)).status).toBe(404);
+    expect((await call('POST', '/api/groups', { code: CODE, body: { name: 'a' } })).status).toBe(201);
+  });
+
+  it('heals the token hash of a legacy group on invite', async () => {
+    const legacy = 'legacy-random-token';
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(legacy)))]
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    await env.DB.prepare('INSERT INTO groups (id, name, name_key, token_hash, created_at) VALUES (?, ?, ?, ?, ?)')
+      .bind('g_old', 'Alt', 'alt', hash, t)
+      .run();
+    expect((await call('GET', '/api/groups/me', { token: legacy })).status).toBe(200);
+    const i = await orga('GET', '/groups/g_old/invite');
+    expect(i.status).toBe(200);
+    expect(i.body.token).not.toBe(legacy);
+    expect((await call('GET', '/api/groups/me', { token: legacy })).status).toBe(401);
+    expect((await call('GET', '/api/groups/me', { token: i.body.token })).body).toEqual({ id: 'g_old', name: 'Alt' });
   });
 });

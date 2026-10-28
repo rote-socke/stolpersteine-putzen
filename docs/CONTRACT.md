@@ -47,12 +47,13 @@ A group holds at most one reservation. A note is independent of the status.
 All bodies are JSON. Times are Unix milliseconds. Errors answer
 `{ "error": "<code>", ... }` with a fitting HTTP status.
 
-Writes need `Authorization: Bearer <groupToken>`, except creating a group,
-which needs `X-Organizer-Code: <code>`. Reads need nothing.
+Writes need `Authorization: Bearer <groupToken>`, except creating a group and
+the organizer endpoints, which need `X-Organizer-Code: <code>`. Reads need
+nothing.
 
 | Method and path | Auth | Body | Success |
 |---|---|---|---|
-| `GET /api/state` | none | | `{ now, groups: [{id, name}], locations: { [id]: LocationState } }` |
+| `GET /api/state` | none | | `{ now, groups: [{id, name}], locations: { [id]: LocationState } }`; `groups` has no deleted groups |
 | `POST /api/groups` | organizer code | `{ name }` (1–40 chars) | `201 { id, name, token }` |
 | `GET /api/groups/me` | group token | | `{ id, name }` |
 | `POST /api/locations/:id/reserve` | group token | | `{ location: LocationState }`; releases the group's previous reservation; `409 { error: "taken", groupId, groupName }` if another group holds a live reservation, `409 { error: "cleaned" }` if already cleaned |
@@ -60,6 +61,31 @@ which needs `X-Organizer-Code: <code>`. Reads need nothing.
 | `POST /api/locations/:id/clean` | group token | | `{ location }`; allowed from any status |
 | `POST /api/locations/:id/reopen` | group token | | `{ location }`; undoes `cleaned` |
 | `PUT /api/locations/:id/note` | group token | `{ text }` (max 500 chars, empty clears) | `{ location }` |
+
+### Organizer endpoints
+
+All need `X-Organizer-Code`; a wrong or missing code is `401 unauthorized`. An
+unknown or deleted group id is `404 not_found`.
+
+| Method and path | Body | Success |
+|---|---|---|
+| `GET /api/orga/groups` | | `{ groups: [{ id, name, createdAt, cleanedCount, reservation: { locationId, expiresAt } \| null }] }`; not deleted, in creation order; `reservation` only while live. Also the code check when entering organizer mode |
+| `GET /api/orga/groups/:id/invite` | | `{ id, name, token }` |
+| `POST /api/orga/groups/:id/rotate` | | `{ id, name, token }`; the old token stops working |
+| `PATCH /api/orga/groups/:id` | `{ name }` (same rules as creation) | `{ id, name }`; `409 name_taken` |
+| `DELETE /api/orga/groups/:id` | | `204` |
+
+Group tokens are derived: `token = base64url(HMAC-SHA256(INVITE_SECRET,
+"<groupId>:<tokenVersion>"))`. The database stores only the SHA-256 of the
+current token (`token_hash`). A new group has version 0. "Neuen Link" (`rotate`)
+raises the version, so all earlier QR codes and links stop working. A group
+from before the derivation has a random token; its first `invite` call stores
+the hash of the derived token instead (one-time switch, old links stop working).
+
+`DELETE` is a soft delete: the group's `on_the_way` reservation is removed, its
+name and token stop being valid (the name can be used again), cleaned rows and
+notes stay. Locations cleaned or noted by a deleted group show the group name
+as `"<name> (gelöscht)"` in `groupName`.
 
 `LocationState`, only listed for locations that have a status other than
 `open` or a note:

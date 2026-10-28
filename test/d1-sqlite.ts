@@ -1,6 +1,6 @@
 // Minimal D1-compatible adapter over node:sqlite, for tests only.
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 
 type Bind = string | number | null;
 
@@ -28,9 +28,11 @@ class Statement {
   }
 }
 
-export function createTestDb(migrationFile = 'migrations/0001_init.sql') {
+export function createTestDb() {
   const sqlite = new DatabaseSync(':memory:');
-  sqlite.exec(readFileSync(migrationFile, 'utf8'));
+  for (const file of readdirSync('migrations').filter((f) => f.endsWith('.sql')).sort()) {
+    sqlite.exec(readFileSync(`migrations/${file}`, 'utf8'));
+  }
   return {
     prepare: (sql: string) => new Statement(sqlite, sql),
     async batch(stmts: Statement[]) {

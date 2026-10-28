@@ -15,6 +15,10 @@ stay on their sites; this app only links to them.
 - Anyone with the link can view the map and the cleaning state.
 - An organizer creates a group with the organizer code. The app then shows a
   QR code (and a shareable link) that lets the group's members join.
+- In organizer mode ("Organisation" in the group dialog) the organizer sees
+  the progress and all groups, can show a group's invite again, create a new
+  link, rename, delete groups or join one. Group tokens are derived from
+  `INVITE_SECRET`, so an invite never gets lost.
 - Members can reserve a stone ("Wir gehen hin"), mark it cleaned and leave a
   note. A reservation expires after 45 minutes.
 
@@ -29,7 +33,7 @@ npm run typecheck
 npm run data         # refresh public/data/locations.json from the KML
 ```
 
-`.dev.vars` holds the local organizer code (`ORGANIZER_CODE=...`).
+`.dev.vars` holds the local secrets (`ORGANIZER_CODE=...` and `INVITE_SECRET=...`).
 
 ## Deploy
 
@@ -53,8 +57,14 @@ First deploy:
 npx wrangler d1 create stolpersteine-putzen   # put the printed id into wrangler.jsonc
 npm run db:migrate:remote
 npx wrangler secret put ORGANIZER_CODE
+npx wrangler secret put INVITE_SECRET   # long random string; changing it invalidates all invites
 npm run deploy
 ```
+
+Existing deployment: set `INVITE_SECRET` before the first deploy of this
+version. Groups from before use their old random token until the organizer
+opens their invite once; then they switch to the derived token and their old
+links stop working.
 
 Later deploys: `npm run db:migrate:remote` if there are new migrations, then
 `npm run deploy`.

@@ -4,6 +4,7 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   ORGANIZER_CODE: string;
+  INVITE_SECRET: string;
 }
 
 export interface ApiOptions {
@@ -18,6 +19,10 @@ const NAME_MAX = 40;
 interface Group {
   id: string;
   name: string;
+}
+interface GroupRow extends Group {
+  token_version: number;
+  token_hash: string;
 }
 interface StateRow {
   location_id: string;
@@ -71,6 +76,20 @@ function base64url(bytes: Uint8Array): string {
 }
 const randomId = (bytes: number) => base64url(crypto.getRandomValues(new Uint8Array(bytes)));
 
+/** The group token is derived, so the organizer can always show the invite again. */
+async function deriveToken(env: Env, groupId: string, version: number): Promise<string> {
+  if (!env.INVITE_SECRET) throw new Error('INVITE_SECRET is not set');
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(env.INVITE_SECRET),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${groupId}:${version}`));
+  return base64url(new Uint8Array(mac));
+}
+
 /** Constant-time equality: compares fixed-length digests, so length and content do not leak. */
 async function safeEqual(a: string, b: string): Promise<boolean> {
   const [da, db] = await Promise.all([sha256(a), sha256(b)]);
@@ -95,7 +114,7 @@ export function createApi(opts: ApiOptions) {
   async function authenticate(request: Request, env: Env): Promise<Group> {
     const m = /^Bearer (\S+)$/.exec(request.headers.get('authorization') ?? '');
     if (!m) throw fail(401, 'unauthorized');
-    const group = await env.DB.prepare('SELECT id, name FROM groups WHERE token_hash = ?')
+    const group = await env.DB.prepare('SELECT id, name FROM groups WHERE token_hash = ? AND deleted_at IS NULL')
       .bind(await sha256(m[1]))
       .first<Group>();
     if (!group) throw fail(401, 'unauthorized');
@@ -132,9 +151,15 @@ export function createApi(opts: ApiOptions) {
     return s;
   }
 
+  /** Names for the state; deleted groups stay visible on what they cleaned or noted. */
+  const nameMap = (rows: (Group & { deleted_at: number | null })[]) =>
+    new Map(rows.map((g) => [g.id, g.deleted_at === null ? g.name : `${g.name} (gelöscht)`]));
+
   async function groupNames(env: Env): Promise<Map<string, string>> {
-    const { results } = await env.DB.prepare('SELECT id, name FROM groups').all<Group>();
-    return new Map(results.map((g) => [g.id, g.name]));
+    const { results } = await env.DB.prepare('SELECT id, name, deleted_at FROM groups').all<
+      Group & { deleted_at: number | null }
+    >();
+    return nameMap(results);
   }
 
   async function locationState(env: Env, id: string): Promise<LocationState> {
@@ -151,9 +176,11 @@ export function createApi(opts: ApiOptions) {
     const [states, notes, groups] = await Promise.all([
       env.DB.prepare('SELECT * FROM location_state').all<StateRow>(),
       env.DB.prepare('SELECT * FROM notes').all<NoteRow>(),
-      env.DB.prepare('SELECT id, name FROM groups ORDER BY created_at').all<Group>(),
+      env.DB.prepare('SELECT id, name, deleted_at FROM groups ORDER BY created_at').all<
+        Group & { deleted_at: number | null }
+      >(),
     ]);
-    const names = new Map(groups.results.map((g) => [g.id, g.name]));
+    const names = nameMap(groups.results);
     const noteById = new Map(notes.results.map((n) => [n.location_id, n]));
     const rowById = new Map(states.results.map((r) => [r.location_id, r]));
     const locations: Record<string, LocationState> = {};
@@ -161,19 +188,34 @@ export function createApi(opts: ApiOptions) {
       const s = toState(rowById.get(id), noteById.get(id), names, t);
       if (s) locations[id] = s;
     }
-    return json({ now: t, groups: groups.results, locations });
+    const live = groups.results.filter((g) => g.deleted_at === null).map(({ id, name }) => ({ id, name }));
+    return json({ now: t, groups: live, locations });
   }
 
-  async function createGroup(request: Request, env: Env): Promise<Response> {
+  async function requireOrganizer(request: Request, env: Env): Promise<void> {
     const code = request.headers.get('x-organizer-code');
     if (!code || !env.ORGANIZER_CODE || !(await safeEqual(code, env.ORGANIZER_CODE))) {
       throw fail(401, 'unauthorized');
     }
+  }
+
+  async function readName(request: Request): Promise<string> {
     const body = await readJson(request);
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (name.length < 1 || name.length > NAME_MAX) throw fail(400, 'invalid');
+    return name;
+  }
+
+  const nameTaken = (e: unknown) => {
+    if (/UNIQUE/i.test(String(e instanceof Error ? e.message : e))) return fail(409, 'name_taken');
+    return e;
+  };
+
+  async function createGroup(request: Request, env: Env): Promise<Response> {
+    await requireOrganizer(request, env);
+    const name = await readName(request);
     const id = `g_${randomId(9)}`;
-    const token = randomId(32);
+    const token = await deriveToken(env, id, 0);
     try {
       await env.DB.prepare(
         'INSERT INTO groups (id, name, name_key, token_hash, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -181,10 +223,99 @@ export function createApi(opts: ApiOptions) {
         .bind(id, name, name.toLowerCase(), await sha256(token), now())
         .run();
     } catch (e) {
-      if (/UNIQUE/i.test(String(e instanceof Error ? e.message : e))) throw fail(409, 'name_taken');
-      throw e;
+      throw nameTaken(e);
     }
     return json({ id, name, token }, 201);
+  }
+
+  // ---------- organizer ----------
+
+  async function listGroups(env: Env): Promise<Response> {
+    const t = now();
+    const [groups, cleaned, reserved] = await Promise.all([
+      env.DB.prepare('SELECT id, name, created_at FROM groups WHERE deleted_at IS NULL ORDER BY created_at').all<
+        Group & { created_at: number }
+      >(),
+      env.DB.prepare("SELECT group_id, COUNT(*) AS n FROM location_state WHERE status = 'cleaned' GROUP BY group_id").all<{
+        group_id: string;
+        n: number;
+      }>(),
+      env.DB.prepare(
+        "SELECT group_id, location_id, updated_at FROM location_state WHERE status = 'on_the_way' AND updated_at > ?",
+      )
+        .bind(t - RESERVATION_MS)
+        .all<{ group_id: string; location_id: string; updated_at: number }>(),
+    ]);
+    const counts = new Map(cleaned.results.map((r) => [r.group_id, Number(r.n)]));
+    const live = new Map(reserved.results.map((r) => [r.group_id, r]));
+    return json({
+      groups: groups.results.map((g) => {
+        const r = live.get(g.id);
+        return {
+          id: g.id,
+          name: g.name,
+          createdAt: g.created_at,
+          cleanedCount: counts.get(g.id) ?? 0,
+          reservation: r ? { locationId: r.location_id, expiresAt: r.updated_at + RESERVATION_MS } : null,
+        };
+      }),
+    });
+  }
+
+  async function findGroup(env: Env, id: string): Promise<GroupRow> {
+    const g = await env.DB.prepare(
+      'SELECT id, name, token_version, token_hash FROM groups WHERE id = ? AND deleted_at IS NULL',
+    )
+      .bind(id)
+      .first<GroupRow>();
+    if (!g) throw fail(404, 'not_found');
+    return g;
+  }
+
+  // A legacy group (random token from before) switches to the derived token here, once.
+  async function invite(env: Env, id: string): Promise<Response> {
+    const g = await findGroup(env, id);
+    const token = await deriveToken(env, g.id, g.token_version);
+    const hash = await sha256(token);
+    if (hash !== g.token_hash) {
+      await env.DB.prepare('UPDATE groups SET token_hash = ? WHERE id = ?').bind(hash, g.id).run();
+    }
+    return json({ id: g.id, name: g.name, token });
+  }
+
+  async function rotate(env: Env, id: string): Promise<Response> {
+    const g = await findGroup(env, id);
+    const version = g.token_version + 1;
+    const token = await deriveToken(env, g.id, version);
+    await env.DB.prepare('UPDATE groups SET token_version = ?, token_hash = ? WHERE id = ?')
+      .bind(version, await sha256(token), g.id)
+      .run();
+    return json({ id: g.id, name: g.name, token });
+  }
+
+  async function rename(request: Request, env: Env, id: string): Promise<Response> {
+    const g = await findGroup(env, id);
+    const name = await readName(request);
+    try {
+      await env.DB.prepare('UPDATE groups SET name = ?, name_key = ? WHERE id = ?')
+        .bind(name, name.toLowerCase(), g.id)
+        .run();
+    } catch (e) {
+      throw nameTaken(e);
+    }
+    return json({ id: g.id, name });
+  }
+
+  // Soft delete: location_state and notes keep referencing the group row.
+  async function removeGroup(env: Env, id: string): Promise<Response> {
+    const g = await findGroup(env, id);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM location_state WHERE group_id = ? AND status = 'on_the_way'").bind(g.id),
+      env.DB.prepare(
+        "UPDATE groups SET deleted_at = ?, name_key = 'deleted:' || id, token_hash = 'deleted:' || id WHERE id = ?",
+      ).bind(now(), g.id),
+    ]);
+    return new Response(null, { status: 204, headers: { 'cache-control': 'no-store' } });
   }
 
   async function reserve(env: Env, group: Group, id: string): Promise<LocationState> {
@@ -278,6 +409,20 @@ export function createApi(opts: ApiOptions) {
     if (path === '/api/groups/me' && method === 'GET') {
       const g = await authenticate(request, env);
       return json({ id: g.id, name: g.name });
+    }
+    if (path.startsWith('/api/orga/')) {
+      await requireOrganizer(request, env);
+      if (path === '/api/orga/groups' && method === 'GET') return listGroups(env);
+      const o = /^\/api\/orga\/groups\/([^/]+)(?:\/(invite|rotate))?$/.exec(path);
+      if (o) {
+        const id = decodeURIComponent(o[1]);
+        if (o[2] === 'invite' && method === 'GET') return invite(env, id);
+        if (o[2] === 'rotate' && method === 'POST') return rotate(env, id);
+        if (!o[2] && method === 'PATCH') return rename(request, env, id);
+        if (!o[2] && method === 'DELETE') return removeGroup(env, id);
+        throw fail(405, 'invalid');
+      }
+      throw fail(404, 'not_found');
     }
     const m = /^\/api\/locations\/([^/]+)\/(reserve|release|clean|reopen|note)$/.exec(path);
     if (m) {
