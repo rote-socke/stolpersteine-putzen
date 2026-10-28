@@ -2,7 +2,8 @@
 
 A mobile web app that coordinates groups cleaning Stolpersteine in Stuttgart,
 starting with Bad Cannstatt: map of all stones, nearest open stone, shared
-reservations ("on the way"), cleaned state and notes. The UI text is German.
+reservations ("on the way"), cleaned state and notes. The UI is German and
+English (`public/js/i18n.js`). Ideas and open points: `docs/ROADMAP.md`.
 
 Git workflow: direct on the default branch
 

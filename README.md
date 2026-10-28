@@ -21,6 +21,12 @@ stay on their sites; this app only links to them.
   `INVITE_SECRET`, so an invite never gets lost.
 - Members can reserve a stone ("Wir gehen hin"), mark it cleaned and leave a
   note. A reservation expires after 45 minutes.
+- Members can share their phone's position with the other groups (opt-in,
+  latest position only, deleted after 10 minutes without an update).
+- The app is installable ("Stolpersteine"), in German and English, with a
+  cleaning guide and a privacy note.
+
+Ideas and open points are in `docs/ROADMAP.md`.
 
 ## Development
 
