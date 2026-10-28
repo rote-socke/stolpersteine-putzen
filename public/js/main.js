@@ -115,29 +115,41 @@ function startLocating({ center }) {
   centerOnNextFix = center && !position;
   if (watchId !== null) return;
   $('locate-button').classList.add('is-active');
+  // Without Google location services (e.g. GrapheneOS) the first GPS fix can
+  // take a minute or more, so the watch has no timeout and only a denied
+  // permission stops it. A quick coarse request runs alongside for an early fix.
+  navigator.geolocation.getCurrentPosition((p) => { if (!position) onPosition(p); }, () => {},
+    { enableHighAccuracy: false, maximumAge: 60000, timeout: 20000 });
+  let warned = false;
   watchId = navigator.geolocation.watchPosition(
-    (p) => {
-      const prev = position;
-      position = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy };
-      mapApi.setUserPosition(position.lat, position.lon, position.accuracy);
-      if (centerOnNextFix) {
-        centerOnNextFix = false;
-        mapApi.map.setView([position.lat, position.lon], Math.max(mapApi.map.getZoom(), 17));
-      }
-      if (!prev || distanceMeters(prev, position) > 15) {
-        if (view.mode === 'home') renderSheet();
-      }
-    },
+    onPosition,
     (err) => {
-      navigator.geolocation.clearWatch(watchId);
-      watchId = null;
-      $('locate-button').classList.remove('is-active');
-      toast(err.code === err.PERMISSION_DENIED
-        ? 'Standort nicht erlaubt. Du kannst ihn in den Browser-Einstellungen freigeben.'
-        : 'Standort gerade nicht verfügbar.', { error: true });
+      if (err.code === err.PERMISSION_DENIED) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        $('locate-button').classList.remove('is-active');
+        toast('Standort nicht erlaubt. Du kannst ihn in den Browser-Einstellungen freigeben.', { error: true });
+        return;
+      }
+      if (warned || position) return;
+      warned = true;
+      toast(`Standort wird noch gesucht – draußen klappt es meist schneller. (Code ${err.code}: ${err.message})`, { error: true });
     },
-    { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 },
+    { enableHighAccuracy: true, maximumAge: 10000 },
   );
+}
+
+function onPosition(p) {
+  const prev = position;
+  position = { lat: p.coords.latitude, lon: p.coords.longitude, accuracy: p.coords.accuracy };
+  mapApi.setUserPosition(position.lat, position.lon, position.accuracy);
+  if (centerOnNextFix) {
+    centerOnNextFix = false;
+    mapApi.map.setView([position.lat, position.lon], Math.max(mapApi.map.getZoom(), 17));
+  }
+  if (!prev || distanceMeters(prev, position) > 15) {
+    if (view.mode === 'home') renderSheet();
+  }
 }
 $('locate-button').addEventListener('click', () => startLocating({ center: true }));
 
